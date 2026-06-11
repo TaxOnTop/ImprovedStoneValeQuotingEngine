@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "LeadQuote": {
+      "title": "LeadQuote",
+      "description": "Represents a customer lead and their automated or adjusted powerwashing price quotes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "customerName": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "sqftHome": {
+          "type": "number"
+        },
+        "stories": {
+          "type": "number"
+        },
+        "roofFootprintSqft": {
+          "type": "number"
+        },
+        "drivewaySqft": {
+          "type": "number"
+        },
+        "packageSelected": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "quoted",
+            "booked_walkthrough",
+            "booked_job",
+            "follow_up_needed",
+            "not_interested"
+          ]
+        },
+        "bookingType": {
+          "type": "string",
+          "enum": [
+            "job",
+            "walkthrough"
+          ]
+        },
+        "bookingDateTime": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "customerName",
+        "phone",
+        "email",
+        "address",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "leads_quotes/{id}": {
+      "schema": "LeadQuote",
+      "description": "Collection of lead profiles, customized square footage, package quotes, and scheduling selections."
+    }
+  }
+}
