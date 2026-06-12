@@ -36,19 +36,23 @@ import DrivewayMeasureMap from './DrivewayMeasureMap';
 import { Lead, CalculatedRates } from './types';
 
 // Front-end Quote Calculator replicating the back-end SOP
+const DRIVEWAY_RATE = 0.25;
+const PATIO_RATE = 0.30;
+
 function calculateClientSideRates(
   sqftHome: number,
   stories: number,
   roofFootprintSqft: number,
   drivewaySqft: number,
+  patioSqft: number,
   windowSections: number,
   exteriorMaterial: string
 ): CalculatedRates {
-  const drivewayBase = drivewaySqft * 0.25;
+  const drivewayBase = drivewaySqft * DRIVEWAY_RATE;
   const drivewayPrice = Math.max(150, Math.round(drivewayBase));
   
-  const patioSqft = Math.round(drivewaySqft * 0.3);
-  const patioPrice = Math.max(120, Math.round(patioSqft * 0.35)); 
+  const patioBase = patioSqft * PATIO_RATE;
+  const patioPrice = patioSqft > 0 ? Math.max(120, Math.round(patioBase)) : 0;
   
   const softWashBase = sqftHome * 0.25;
   const storyAdd = stories === 2 ? 150 : stories >= 3 ? 300 : 0;
@@ -139,6 +143,7 @@ export default function App() {
     stories: number;
     roofFootprintSqft: number;
     drivewaySqft: number;
+    patioSqft?: number;
     windowSections: number;
     exteriorMaterial: string;
     confidenceExplanation: string;
@@ -149,16 +154,20 @@ export default function App() {
   const [adjStories, setAdjStories] = useState(2);
   const [adjRoofFootprint, setAdjRoofFootprint] = useState(1500);
   const [adjDriveway, setAdjDriveway] = useState(1000);
+  const [adjPatio, setAdjPatio] = useState(0);
   const [adjWindows, setAdjWindows] = useState(20);
   const [adjMaterial, setAdjMaterial] = useState('Vinyl Siding');
   
   const [selectedServices, setSelectedServices] = useState({
     roof: false,
     driveway: true,
+    patio: false,
     gutters: false,
     windows: false,
     siding: false,
   });
+
+  const [activePolygonType, setActivePolygonType] = useState<'driveway' | 'patio'>('driveway');
 
   const toggleService = (service: keyof typeof selectedServices) => {
     setSelectedServices((prev) => ({
@@ -205,10 +214,11 @@ export default function App() {
       adjStories,
       adjRoofFootprint,
       adjDriveway,
+      adjPatio,
       adjWindows,
       adjMaterial
     );
-  }, [adjHomeSize, adjStories, adjRoofFootprint, adjDriveway, adjWindows, adjMaterial]);
+  }, [adjHomeSize, adjStories, adjRoofFootprint, adjDriveway, adjPatio, adjWindows, adjMaterial]);
 
   const itemizedBill = useMemo(() => {
     const items: { label: string; measurement: string; rate: string; price: number }[] = [];
@@ -228,6 +238,15 @@ export default function App() {
         measurement: `${adjDriveway.toLocaleString()} sqft`,
         rate: '$0.25/sqft',
         price: clientProposalCalculations.drivewayWash,
+      });
+    }
+
+    if (selectedServices.patio) {
+      items.push({
+        label: 'Patio / Entry Detail',
+        measurement: `${adjPatio.toLocaleString()} sqft`,
+        rate: '$0.30/sqft',
+        price: clientProposalCalculations.patioWash,
       });
     }
 
@@ -345,6 +364,7 @@ export default function App() {
           stories: data.stories,
           roofFootprintSqft: data.roofFootprintSqft,
           drivewaySqft: data.drivewaySqft,
+          patioSqft: data.patioSqft ?? 0,
           windowSections: data.windowSections,
           exteriorMaterial: data.exteriorMaterial,
           confidenceExplanation: data.confidenceExplanation
@@ -355,6 +375,7 @@ export default function App() {
         setAdjStories(data.stories);
         setAdjRoofFootprint(data.roofFootprintSqft);
         setAdjDriveway(data.drivewaySqft);
+        setAdjPatio(data.patioSqft ?? 0);
         setAdjWindows(data.windowSections);
         setAdjMaterial(data.exteriorMaterial);
       } else {
@@ -370,6 +391,7 @@ export default function App() {
         stories: 2,
         roofFootprintSqft: 1400,
         drivewaySqft: 900,
+        patioSqft: 0,
         windowSections: 18,
         exteriorMaterial: "Vinyl Siding",
         confidenceExplanation: "Calculated using high-resolution Palo Alto baseline formulas. Tweak details below."
@@ -378,6 +400,7 @@ export default function App() {
       setAdjStories(2);
       setAdjRoofFootprint(1400);
       setAdjDriveway(900);
+      setAdjPatio(0);
       setAdjWindows(18);
       setAdjMaterial("Vinyl Siding");
     }
@@ -570,6 +593,12 @@ export default function App() {
   const handleDrivewayAreaChange = useCallback((sqft: number) => {
     if (sqft > 0) {
       setAdjDriveway(sqft);
+    }
+  }, []);
+
+  const handlePatioAreaChange = useCallback((sqft: number) => {
+    if (sqft > 0) {
+      setAdjPatio(sqft);
     }
   }, []);
 
@@ -885,7 +914,8 @@ export default function App() {
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                         {[
                           ['roof', 'Roof'],
-                          ['driveway', 'Driveway'],
+                          ['driveway', 'Driveway / Flatwork'],
+                          ['patio', 'Patio / Entry Detail'],
                           ['gutters', 'Gutters'],
                           ['windows', 'Windows'],
                           ['siding', 'Siding'],
@@ -918,14 +948,37 @@ export default function App() {
                             <p className="text-[10px] text-white/50 mt-1">Click the driveway corners on the satellite map. The measured sqft will update the driveway price automatically.</p>
                           </div>
                         </div>
-                        <div className="flex items-center justify-between mb-4">
-                          <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Current measurement:</span>
-                          <span className="text-lg font-bold text-[#C5A059]">{adjDriveway.toLocaleString()} sqft</span>
+                        <div className="flex items-center justify-between mb-4 gap-4">
+                          <div>
+                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Driveway:</span>
+                            <div className="text-lg font-bold text-[#C5A059]">{adjDriveway.toLocaleString()} sqft</div>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Patio:</span>
+                            <div className="text-lg font-bold text-[#C5A059]">{adjPatio.toLocaleString()} sqft</div>
+                          </div>
+                          <div className="ml-auto flex items-center gap-2">
+                            <button
+                              onClick={() => setActivePolygonType('driveway')}
+                              className={`px-3 py-1 text-xs rounded-none border ${activePolygonType === 'driveway' ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                            >
+                              Draw: Driveway
+                            </button>
+                            <button
+                              onClick={() => setActivePolygonType('patio')}
+                              className={`px-3 py-1 text-xs rounded-none border ${activePolygonType === 'patio' ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                            >
+                              Draw: Patio
+                            </button>
+                          </div>
                         </div>
+
                         <DrivewayMeasureMap
                           lat={estimateInfo.propertyLat}
                           lng={estimateInfo.propertyLng}
-                          onAreaChange={handleDrivewayAreaChange}
+                          activeType={activePolygonType}
+                          onAreaChangeDriveway={handleDrivewayAreaChange}
+                          onAreaChangePatio={handlePatioAreaChange}
                         />
                       </div>
                     )}
@@ -1693,15 +1746,15 @@ export default function App() {
                         <div className="space-y-1 font-mono text-[10px] text-white/60">
                           <div className="flex justify-between">
                             <span>Cladding Wash ({admStories} story, {admHomeSize} sqft):</span>
-                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, admWindows, admMaterial).sidingWash}</span>
+                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).sidingWash}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Double Driveway Wash ({admDrivewaySqft} sqft):</span>
-                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, admWindows, admMaterial).drivewayWash}</span>
+                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).drivewayWash}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Window detailing ({admWindows} sections):</span>
-                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, admWindows, admMaterial).windowDetail}</span>
+                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).windowDetail}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Gutter Restorations (Wash & Brighten):</span>
@@ -1709,7 +1762,7 @@ export default function App() {
                           </div>
                           <div className="flex justify-between font-serif font-bold text-[#E0D8D0] border-t border-white/10 pt-1.5 mt-1.5 text-sm">
                             <span>Calculated Signature Proposal:</span>
-                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, admWindows, admMaterial).fullHomeDetail}</span>
+                            <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).fullHomeDetail}</span>
                           </div>
                         </div>
 
