@@ -1,0 +1,6 @@
+{
+  "name": "Stonevale QR Quote & Steward Engine",
+  "description": "An automated QR-to-Quote platform for Stonevale Exterior Co using Google Solar API and Gemini grounding to estimate roof footprint, driveway area, and generate premium exterior restoration quotes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
