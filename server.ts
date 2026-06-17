@@ -221,7 +221,7 @@ function calculateQuotes(
   const fullHomeDetailPrice = Math.max(1200, componentSum);
   
   // 3. Package 3 - The Estate Care Plan (recurring - show but don't hard-sell)
-  // Look up home size in SOP table:
+  // Use the full measured roof sqft for the plan band.
   const plans = {
     "1800-2200": { essential: 99, premium: 229, signature: 429 },
     "2200-3000": { essential: 129, premium: 299, signature: 549 },
@@ -229,17 +229,18 @@ function calculateQuotes(
     "4000-5000": { essential: 189, premium: 529, signature: 949 },
     "5000+": { essential: 249, premium: 649, signature: 1199 }
   };
-  
+
+  const carePlanSqft = Math.round(roofFootprintSqft);
   let key: keyof typeof plans = "2200-3000";
-  if (sqftHome < 1800) {
+  if (carePlanSqft < 1800) {
     key = "1800-2200";
-  } else if (sqftHome >= 1800 && sqftHome <= 2200) {
+  } else if (carePlanSqft <= 2200) {
     key = "1800-2200";
-  } else if (sqftHome > 2200 && sqftHome <= 3000) {
+  } else if (carePlanSqft <= 3000) {
     key = "2200-3000";
-  } else if (sqftHome > 3000 && sqftHome <= 4000) {
+  } else if (carePlanSqft <= 4000) {
     key = "3000-4000";
-  } else if (sqftHome > 4000 && sqftHome <= 5000) {
+  } else if (carePlanSqft <= 5000) {
     key = "4000-5000";
   } else {
     key = "5000+";
@@ -262,9 +263,31 @@ function calculateQuotes(
   };
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithBackoff(url: string, retries = 3, baseDelayMs = 1200) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const response = await fetch(url);
+    if (response.status !== 429 || attempt === retries) {
+      return response;
+    }
+
+    const retryAfterHeader = response.headers.get("retry-after");
+    const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 0;
+    const jitterMs = Math.floor(Math.random() * 500);
+    const delayMs = retryAfterMs || baseDelayMs * 2 ** attempt + jitterMs;
+    console.warn(`Google Solar rate limited with 429. Retrying in ${delayMs}ms.`);
+    await sleep(delayMs);
+  }
+
+  return fetch(url);
+}
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   console.log("Current folder:", process.cwd());
   console.log("Google Maps key loaded:", !!process.env.GOOGLE_MAPS_API_KEY);
   console.log("Gemini key loaded:", !!process.env.GEMINI_API_KEY);
@@ -277,7 +300,7 @@ async function startServer() {
 
   // ESTIMATE API: Google Solar + Geocoding API + Gemini Search Grounding Fallback
   app.post("/api/estimate", async (req, res) => {
-    const { address } = req.body;
+    const { address, batchMode = false } = req.body;
     if (!address || typeof address !== 'string' || address.trim().length === 0) {
       return res.status(400).json({ error: "Property address is required." });
     }
@@ -297,6 +320,7 @@ async function startServer() {
     };
 
     let directSolarSuccess = false;
+    let fallbackSolverSuccess = false;
     let propertyLat: number | null = null;
     let propertyLng: number | null = null;
     const googleMapsKey = process.env.GOOGLE_MAPS_API_KEY;
@@ -305,36 +329,51 @@ async function startServer() {
     if (googleMapsKey) {
       try {
         console.log(`Attempting geocoding for: "${trimmedAddress}"`);
-        const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(trimmedAddress)}&key=${googleMapsKey}`;
+        const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(trimmedAddress)}&region=us&components=country:US&key=${googleMapsKey}`;
         const geoResponse = await fetch(geocodeUrl);
         const geoData = await geoResponse.json();
 
-        if (geoData.status === "OK" && geoData.results?.[0]?.geometry?.location) {
-          const { lat, lng } = geoData.results[0].geometry.location;
-          console.log(`Geocoded success! Lat: ${lat}, Lng: ${lng}`);
-          propertyLat = lat;
-          propertyLng = lng;
+        if (geoData.status === "OK" && geoData.results?.length) {
+          const candidates = geoData.results
+            .filter((result: any) => result?.geometry?.location)
+            .slice(0, 3);
+          const qualityLevels = ["HIGH", "MEDIUM", "LOW"];
 
-          // Try Google Solar API
-          const solarUrl = `https://solar.googleapis.com/v1/buildingInsights:findClosest?location.latitude=${lat}&location.longitude=${lng}&requiredQuality=HIGH&key=${googleMapsKey}`;
-          const solarResponse = await fetch(solarUrl);
-          
-          if (solarResponse.ok) {
-            const solarData = await solarResponse.json();
-            if (solarData.solarPotential?.wholeRoofStats) {
-              const roofAreaM2 = solarData.solarPotential.wholeRoofStats.areaMeters2;
-              const roofSqft = Math.round(roofAreaM2 * 10.7639);
-              console.log(`Solar API direct roof area match: ${roofSqft} sqft`);
+          for (const result of candidates) {
+            if (directSolarSuccess) break;
+            const { lat, lng } = result.geometry.location;
+            propertyLat = propertyLat ?? lat;
+            propertyLng = propertyLng ?? lng;
+            console.log(`Geocoded candidate: ${result.formatted_address ?? trimmedAddress}. Lat: ${lat}, Lng: ${lng}`);
 
-              finalDetails.roofFootprintSqft = roofSqft;
-              // Driveways are flatwork, not explicitly segmentated in Solar API. 
-              // We calculate standard driveway ratio of 60% of building footprint
-              finalDetails.drivewaySqft = Math.max(400, Math.round(roofSqft * 0.6));
-              finalDetails.confidenceExplanation = `Verified with Google Solar API building footprint segments. Calculated rooftop footprint is exactly ${roofSqft} sqft.`;
-              directSolarSuccess = true;
+            for (const quality of qualityLevels) {
+              const solarUrl = `https://solar.googleapis.com/v1/buildingInsights:findClosest?location.latitude=${lat}&location.longitude=${lng}&requiredQuality=${quality}&key=${googleMapsKey}`;
+              const solarResponse = await fetchWithBackoff(solarUrl);
+
+              if (!solarResponse.ok) {
+                console.warn(`Solar API status ${solarResponse.status} at ${quality} quality for ${result.formatted_address ?? trimmedAddress}.`);
+                continue;
+              }
+
+              const solarData = await solarResponse.json();
+              if (solarData.solarPotential?.wholeRoofStats?.areaMeters2) {
+                const roofAreaM2 = solarData.solarPotential.wholeRoofStats.areaMeters2;
+                const roofSqft = Math.round(roofAreaM2 * 10.7639);
+                console.log(`Solar API roof area match at ${quality} quality: ${roofSqft} sqft`);
+
+                propertyLat = lat;
+                propertyLng = lng;
+                finalDetails.roofFootprintSqft = roofSqft;
+                finalDetails.drivewaySqft = Math.max(400, Math.round(roofSqft * 0.6));
+                finalDetails.confidenceExplanation = `Verified with Google Solar building footprint data at ${quality} quality. Calculated rooftop footprint is ${roofSqft} sqft.`;
+                directSolarSuccess = true;
+                break;
+              }
             }
-          } else {
-            console.warn(`Solar API replied with status: ${solarResponse.status}. Proceeding to Gemini Grounding solver.`);
+          }
+
+          if (!directSolarSuccess) {
+            console.warn("Google Solar did not return roof data for any geocoded candidate.");
           }
         } else {
           console.warn(`Geocoding status: ${geoData.status}. Moving to Gemini Grounding solver.`);
@@ -342,6 +381,16 @@ async function startServer() {
       } catch (err) {
         console.error("Direct API attempt failed, moving to Gemini Grounding solver:", err);
       }
+    }
+
+    if (!directSolarSuccess && batchMode) {
+      return res.json({
+        address: trimmedAddress,
+        propertyLat,
+        propertyLng,
+        solarFound: false,
+        reviewFlag: "NOT ON GOOGLE MAPS",
+      });
     }
 
     // 2. ATTEMPT GEMINI SEARCH GROUNDING & STRUCTURAL SOLVER (HIGHLY POWERFUL FOR REAL-ESTATE INVENTORIES)
@@ -388,6 +437,7 @@ async function startServer() {
         if (textOutput) {
           const geminiResult = JSON.parse(textOutput.trim());
           console.log("Gemini solver successfully returned values:", geminiResult);
+          fallbackSolverSuccess = Boolean(geminiResult?.roofFootprintSqft);
           
           // If we had direct solar successes, keep the high-fidelity roof footprint from Google,
           // but inherit home size, stories, siding, and details from Gemini Search.
@@ -420,6 +470,7 @@ async function startServer() {
       address: trimmedAddress,
       propertyLat,
       propertyLng,
+      solarFound: directSolarSuccess || fallbackSolverSuccess,
       ...finalDetails,
       calculations: calculatedRates
     });

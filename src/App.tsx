@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, FormEvent } from 'react';
+import './brand.css';
+import { calculateStonevaleBatchPrice, CARE_PLANS } from "./lib/stonevalePricing";
 import { 
   MapPin, 
   Sparkles, 
@@ -32,12 +34,64 @@ import {
   Printer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import CsvBatchImport from './CsvBatchImport';
 import DrivewayMeasureMap from './DrivewayMeasureMap';
 import { Lead, CalculatedRates } from './types';
+
+import stonevaleLogo from "./assets/Stonevale Full Logo - Transparent.png";
+import bannerPhoto from "./assets/flyer-photo-banner-historic-home.jpg";
+import footerPhoto from "./assets/flyer-photo-footer-AWL-limestone.jpg";
+import measureTutorialVideo from "./assets/FINAL.mov";
 
 // Front-end Quote Calculator replicating the back-end SOP
 const DRIVEWAY_RATE = 0.25;
 const PATIO_RATE = 0.30;
+const SUPPORT_EMAIL = "garrett@stonevaleexterior.com";
+const SUPPORT_PHONE = "979.985.2750";
+const GOOGLE_IMAGERY_ERROR = "We couldn't access your home through Google's imagery.";
+type PackageChoice =
+  | 'exterior_refresh'
+  | 'full_home_detail'
+  | 'estate_care_plan'
+  | 'single_driveway'
+  | 'single_windows'
+  | 'single_siding'
+  | null;
+
+function pricePatioSurface(sqft: number): number {
+  return sqft > 0 ? Math.max(120, Math.round(sqft * PATIO_RATE)) : 0;
+}
+
+function WhatThisEntails({
+  summary,
+  items,
+  scope,
+}: {
+  summary: string;
+  items: string[];
+  scope: string;
+}) {
+  return (
+    <details
+      onClick={(event) => event.stopPropagation()}
+      className="mt-3 bg-[#0F1113] border border-white/10 px-3 py-2 text-[11px] text-white/65 normal-case tracking-normal font-sans"
+    >
+      <summary className="cursor-pointer text-[#C5A059] font-mono uppercase tracking-wider text-[10px] min-h-6 flex items-center">
+        What this entails
+      </summary>
+      <p className="mt-3 leading-relaxed text-white/70">{summary}</p>
+      <ul className="mt-3 space-y-1.5">
+        {items.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="text-[#C5A059]">&#8226;</span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 pt-3 border-t border-white/10 text-white/45">{scope}</p>
+    </details>
+  );
+}
 
 function calculateClientSideRates(
   sqftHome: number,
@@ -50,27 +104,36 @@ function calculateClientSideRates(
 ): CalculatedRates {
   const drivewayBase = drivewaySqft * DRIVEWAY_RATE;
   const drivewayPrice = Math.max(150, Math.round(drivewayBase));
-  
-  const patioBase = patioSqft * PATIO_RATE;
-  const patioPrice = patioSqft > 0 ? Math.max(120, Math.round(patioBase)) : 0;
-  
-  const softWashBase = sqftHome * 0.25;
+
+  const patioPrice = pricePatioSurface(patioSqft);
+
+  // Pricing per new SOP
   const storyAdd = stories === 2 ? 150 : stories >= 3 ? 300 : 0;
-  const softWashPrice = Math.round(softWashBase + storyAdd);
-  
-  const roofWashPrice = Math.round(roofFootprintSqft * 0.65);
-  
-  const linearFeet = Math.round(4 * Math.sqrt(roofFootprintSqft));
-  const gutterCleanPrice = Math.round(linearFeet * 1.00);
-  const gutterWashPrice = Math.round(linearFeet * 2.00);
-  const gutterFaceBrightening = 150;
-  
-  const windowPrice = windowSections * 12;
-  
-  const exteriorRefreshPrice = softWashPrice + windowPrice;
-  const componentSum = softWashPrice + windowPrice + drivewayPrice + patioPrice + gutterFaceBrightening;
-  const fullHomeDetailPrice = Math.max(1200, componentSum);
-  
+
+  // soft wash uses roof footprint
+  const softWashPrice = Math.round(roofFootprintSqft * 0.30 + storyAdd);
+
+  const windowMultiplier = stories >= 2 ? 0.16 : 0.10;
+  const windowPrice = Math.round(roofFootprintSqft * windowMultiplier);
+
+  const pricingReviewRequired = sqftHome > 5000;
+
+  const exteriorRefreshBase = softWashPrice + windowPrice;
+  const exteriorRefreshPrice = pricingReviewRequired
+    ? 0
+    : Math.round(exteriorRefreshBase);
+
+  const roofWashPrice = 0;
+  const gutterCleanPrice = 0;
+  const gutterWashPrice = 0;
+  const gutterFaceBrightening = 0;
+
+  // Full Home Detail: Exterior Refresh + driveway/walkways + patio/entry areas.
+  const fullHomeDetailBase = softWashPrice + windowPrice + drivewayPrice + patioPrice;
+  const fullHomeDetailPrice = pricingReviewRequired
+    ? 0
+    : Math.max(1200, Math.round(fullHomeDetailBase));
+
   const plans = {
     "1800-2200": { essential: 99, premium: 229, signature: 429 },
     "2200-3000": { essential: 129, premium: 299, signature: 549 },
@@ -78,17 +141,18 @@ function calculateClientSideRates(
     "4000-5000": { essential: 189, premium: 529, signature: 949 },
     "5000+": { essential: 249, premium: 649, signature: 1199 }
   };
-  
+
+  const carePlanSqft = Math.round(roofFootprintSqft);
   let key: keyof typeof plans = "2200-3000";
-  if (sqftHome < 1800) {
+  if (carePlanSqft < 1800) {
     key = "1800-2200";
-  } else if (sqftHome >= 1800 && sqftHome <= 2200) {
+  } else if (carePlanSqft <= 2200) {
     key = "1800-2200";
-  } else if (sqftHome > 2200 && sqftHome <= 3000) {
+  } else if (carePlanSqft <= 3000) {
     key = "2200-3000";
-  } else if (sqftHome > 3000 && sqftHome <= 4000) {
+  } else if (carePlanSqft <= 4000) {
     key = "3000-4000";
-  } else if (sqftHome > 4000 && sqftHome <= 5000) {
+  } else if (carePlanSqft <= 5000) {
     key = "4000-5000";
   } else {
     key = "5000+";
@@ -106,6 +170,7 @@ function calculateClientSideRates(
     
     exteriorRefresh: exteriorRefreshPrice,
     fullHomeDetail: fullHomeDetailPrice,
+    pricingReviewRequired,
     estateCarePlans: plans[key],
     homeCategory: key
   };
@@ -113,6 +178,7 @@ function calculateClientSideRates(
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'portal' | 'office'>('portal');
+  const [startMode, setStartMode] = useState<'single' | 'csv'>('single');
 
   // Client Side State
   const [customerName, setCustomerName] = useState('');
@@ -120,6 +186,7 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
   const [selectedInterest, setSelectedInterest] = useState('full_home');
+  const [estimateLookupError, setEstimateLookupError] = useState('');
 
   // Multi-step Client Journey: 'input' | 'estimating' | 'proposal' | 'scheduling' | 'done'
   const [journeyStep, setJourneyStep] = useState<'input' | 'estimating' | 'proposal' | 'scheduling' | 'done'>('input');
@@ -129,8 +196,8 @@ export default function App() {
   const [stagesText, setStagesText] = useState([
     "Initializing secure satellite connection...",
     "Querying Google Maps Geocoding Coordinates...",
-    "Accessing Google Solar API rooftop footprint segments...",
-    "Grounding local taxes and home real estate indices via Gemini AI...",
+    "Checking satellite rooftop footprint details...",
+    "Reviewing local property records...",
     "Computing customized Stonevale restoration proposals..."
   ]);
 
@@ -154,22 +221,79 @@ export default function App() {
   const [adjStories, setAdjStories] = useState(2);
   const [adjRoofFootprint, setAdjRoofFootprint] = useState(1500);
   const [adjDriveway, setAdjDriveway] = useState(1000);
-  const [adjPatio, setAdjPatio] = useState(0);
+  const [adjFrontPatio, setAdjFrontPatio] = useState(0);
+  const [adjBackPatio, setAdjBackPatio] = useState(0);
+  const adjPatio = adjFrontPatio + adjBackPatio;
+  const [drivewayPolygonComplete, setDrivewayPolygonComplete] = useState(false);
+  const [frontPatioPolygonComplete, setFrontPatioPolygonComplete] = useState(false);
+  const [backPatioPolygonComplete, setBackPatioPolygonComplete] = useState(false);
+  const [noDriveway, setNoDriveway] = useState(false);
+  const [noFrontPatio, setNoFrontPatio] = useState(false);
+  const [noBackPatio, setNoBackPatio] = useState(false);
+  const [polygonClearVersions, setPolygonClearVersions] = useState({
+    driveway: 0,
+    frontPatio: 0,
+    backPatio: 0,
+  });
+  const [polygonRequirementError, setPolygonRequirementError] = useState("");
+  const [serviceGuardMessage, setServiceGuardMessage] = useState("");
+  const [measureHelpNote, setMeasureHelpNote] = useState("");
+  const [measureTutorialOpen, setMeasureTutorialOpen] = useState(false);
   const [adjWindows, setAdjWindows] = useState(20);
   const [adjMaterial, setAdjMaterial] = useState('Vinyl Siding');
   
   const [selectedServices, setSelectedServices] = useState({
-    roof: false,
-    driveway: true,
-    patio: false,
-    gutters: false,
+    driveway: false,
+    frontPatio: false,
+    backPatio: false,
     windows: false,
     siding: false,
   });
 
-  const [activePolygonType, setActivePolygonType] = useState<'driveway' | 'patio'>('driveway');
+  const [activePolygonType, setActivePolygonType] = useState<'driveway' | 'frontPatio' | 'backPatio'>('driveway');
+  const [packageChoice, setPackageChoice] = useState<PackageChoice>(null);
+  const [carePlanTier, setCarePlanTier] = useState<'essential' | 'premium' | 'signature'>('premium');
+
+  const showServiceGuardMessage = (message: string) => {
+    setServiceGuardMessage(message);
+    window.setTimeout(() => setServiceGuardMessage(""), 1000);
+  };
 
   const toggleService = (service: keyof typeof selectedServices) => {
+    if (packageChoice === 'full_home_detail') {
+      if (service === 'driveway') {
+        showServiceGuardMessage("The Full Home Detail comes with Driveway Restoration.");
+        return;
+      }
+      if (service === 'frontPatio') {
+        showServiceGuardMessage("The Full Home Detail comes with Front Patio Restoration.");
+        return;
+      }
+      if (service === 'backPatio') {
+        showServiceGuardMessage("The Full Home Detail comes with Back Patio Restoration.");
+        return;
+      }
+      if (service === 'windows') {
+        showServiceGuardMessage("The Full Home Detail comes with Window Detail.");
+        return;
+      }
+      if (service === 'siding') {
+        showServiceGuardMessage("The Full Home Detail comes with Exterior Soft Wash.");
+        return;
+      }
+    }
+
+    if (packageChoice === 'exterior_refresh') {
+      if (service === 'windows') {
+        showServiceGuardMessage("The Exterior Refresh comes with Window Detail.");
+        return;
+      }
+      if (service === 'siding') {
+        showServiceGuardMessage("The Exterior Refresh comes with Exterior Soft Wash.");
+        return;
+      }
+    }
+
     setSelectedServices((prev) => ({
       ...prev,
       [service]: !prev[service],
@@ -177,8 +301,23 @@ export default function App() {
   };
 
   // Package Selection
-  const [packageChoice, setPackageChoice] = useState<'exterior_refresh' | 'full_home_detail' | 'estate_care_plan' | 'single_driveway' | 'single_windows' | 'single_siding'>('full_home_detail');
-  const [carePlanTier, setCarePlanTier] = useState<'essential' | 'premium' | 'signature'>('premium');
+  const togglePackageChoice = (choice: Exclude<PackageChoice, null>) => {
+    if (choice === 'full_home_detail' && packageChoice !== 'full_home_detail') {
+      setSelectedServices({
+        driveway: false,
+        frontPatio: false,
+        backPatio: false,
+        windows: false,
+        siding: false,
+      });
+    }
+    setPackageChoice((current) => (current === choice ? null : choice));
+  };
+
+  const fullHomeDetailReady =
+    (drivewayPolygonComplete || noDriveway) &&
+    (frontPatioPolygonComplete || noFrontPatio) &&
+    (backPatioPolygonComplete || noBackPatio);
 
   // Scheduling details
   const [bookingType, setBookingType] = useState<'walkthrough' | 'job'>('walkthrough');
@@ -221,58 +360,54 @@ export default function App() {
   }, [adjHomeSize, adjStories, adjRoofFootprint, adjDriveway, adjPatio, adjWindows, adjMaterial]);
 
   const itemizedBill = useMemo(() => {
-    const items: { label: string; measurement: string; rate: string; price: number }[] = [];
-
-    if (selectedServices.roof) {
-      items.push({
-        label: 'Roof Soft Wash',
-        measurement: `${adjRoofFootprint.toLocaleString()} sqft`,
-        rate: '$0.65/sqft',
-        price: clientProposalCalculations.roofWash,
-      });
-    }
+    const items: { key: keyof typeof selectedServices; label: string; measurement: string; rate: string; price: number }[] = [];
 
     if (selectedServices.driveway) {
       items.push({
-        label: 'Driveway / Flatwork Restoration',
+        key: 'driveway',
+        label: 'Driveway Restoration',
         measurement: `${adjDriveway.toLocaleString()} sqft`,
         rate: '$0.25/sqft',
         price: clientProposalCalculations.drivewayWash,
       });
     }
 
-    if (selectedServices.patio) {
+    if (selectedServices.frontPatio) {
       items.push({
-        label: 'Patio / Entry Detail',
-        measurement: `${adjPatio.toLocaleString()} sqft`,
+        key: 'frontPatio',
+        label: 'Front Patio Restoration',
+        measurement: `${adjFrontPatio.toLocaleString()} sqft`,
         rate: '$0.30/sqft',
-        price: clientProposalCalculations.patioWash,
+        price: pricePatioSurface(adjFrontPatio),
       });
     }
 
-    if (selectedServices.gutters) {
+    if (selectedServices.backPatio) {
       items.push({
-        label: 'Gutter Cleanout',
-        measurement: `${Math.round(4 * Math.sqrt(adjRoofFootprint)).toLocaleString()} linear ft`,
-        rate: '$1.00/linear ft',
-        price: clientProposalCalculations.gutterClean,
+        key: 'backPatio',
+        label: 'Back Patio Restoration',
+        measurement: `${adjBackPatio.toLocaleString()} sqft`,
+        rate: '$0.30/sqft',
+        price: pricePatioSurface(adjBackPatio),
       });
     }
 
     if (selectedServices.windows) {
       items.push({
-        label: 'Exterior Window Detail',
-        measurement: `${adjWindows} sections`,
-        rate: '$12/section',
+        key: 'windows',
+        label: 'Window Detail',
+        measurement: `${adjRoofFootprint.toLocaleString()} roof sqft`,
+        rate: adjStories >= 2 ? '$0.16/roof sqft' : '$0.10/roof sqft',
         price: clientProposalCalculations.windowDetail,
       });
     }
 
     if (selectedServices.siding) {
       items.push({
+        key: 'siding',
         label: 'Exterior Soft Wash',
-        measurement: `${adjHomeSize.toLocaleString()} sqft home`,
-        rate: '$0.25/sqft + story add',
+        measurement: `${adjRoofFootprint.toLocaleString()} roof sqft`,
+        rate: '$0.30/roof sqft + story add',
         price: clientProposalCalculations.sidingWash,
       });
     }
@@ -283,10 +418,150 @@ export default function App() {
     selectedServices,
     adjRoofFootprint,
     adjDriveway,
+    adjFrontPatio,
+    adjBackPatio,
     adjWindows,
-    adjHomeSize,
+    adjStories,
     clientProposalCalculations,
   ]);
+
+  const finalEstimate = useMemo(() => {
+    const exteriorRefreshIncluded = new Set<keyof typeof selectedServices>(['siding', 'windows']);
+    const fullDetailReady = fullHomeDetailReady;
+    const packageItems: { label: string; measurement: string; rate: string; price: number }[] = [];
+    let addOnItems = itemizedBill.items;
+    let total = 0;
+    let note = 'Selected services only.';
+    let priceAvailable = true;
+
+    if (clientProposalCalculations.pricingReviewRequired) {
+      return {
+        items: [],
+        total: 0,
+        note: 'Manual review required.',
+        priceAvailable: false,
+      };
+    }
+
+    if (packageChoice === 'exterior_refresh') {
+      packageItems.push({
+        label: 'The Exterior Refresh',
+        measurement: 'Exterior Soft Wash + Window Detail',
+        rate: 'Package price',
+        price: clientProposalCalculations.exteriorRefresh,
+      });
+      addOnItems = itemizedBill.items.filter((item) => !exteriorRefreshIncluded.has(item.key));
+      total = clientProposalCalculations.exteriorRefresh + addOnItems.reduce((sum, item) => sum + item.price, 0);
+      note = 'Exterior Refresh selected. Only services outside that package are added.';
+    } else if (packageChoice === 'full_home_detail') {
+      if (!fullDetailReady) {
+        return {
+          items: [],
+          total: 0,
+          note: 'Measure your driveway and patio using the tool above.',
+          priceAvailable: false,
+        };
+      }
+
+      packageItems.push({
+        label: 'The Full Home Detail',
+        measurement: 'Exterior Refresh + driveway, walkways, patios, and entry',
+        rate: 'Package price',
+        price: clientProposalCalculations.fullHomeDetail,
+      });
+      addOnItems = [];
+      total = clientProposalCalculations.fullHomeDetail;
+      note = 'Full Home Detail selected. Add-on service selections are not added again.';
+    } else if (packageChoice === 'estate_care_plan') {
+      const planPrice = clientProposalCalculations.estateCarePlans[carePlanTier];
+      packageItems.push({
+        label: `The Estate Care Plan (${carePlanTier})`,
+        measurement: 'Recurring care plan',
+        rate: 'Monthly plan',
+        price: planPrice,
+      });
+      total = planPrice + itemizedBill.total;
+      note = 'Estate Care selected. Selected services are added to the care plan.';
+    } else if (packageChoice === 'single_driveway') {
+      packageItems.push({
+        label: 'Driveway Restoration',
+        measurement: `${adjDriveway.toLocaleString()} sqft`,
+        rate: '$0.25/sqft',
+        price: clientProposalCalculations.drivewayWash,
+      });
+      addOnItems = itemizedBill.items.filter((item) => item.key !== 'driveway');
+      total = clientProposalCalculations.drivewayWash + addOnItems.reduce((sum, item) => sum + item.price, 0);
+      note = 'Flatwork selected. Other selected services are added.';
+    } else if (packageChoice === 'single_windows') {
+      packageItems.push({
+        label: 'Window Detail',
+        measurement: `${adjRoofFootprint.toLocaleString()} roof sqft`,
+        rate: adjStories >= 2 ? '$0.16/roof sqft' : '$0.10/roof sqft',
+        price: clientProposalCalculations.windowDetail,
+      });
+      addOnItems = itemizedBill.items.filter((item) => item.key !== 'windows');
+      total = clientProposalCalculations.windowDetail + addOnItems.reduce((sum, item) => sum + item.price, 0);
+      note = 'Window detail selected. Other selected services are added.';
+    } else if (packageChoice === 'single_siding') {
+      packageItems.push({
+        label: 'Exterior Soft Wash',
+        measurement: `${adjRoofFootprint.toLocaleString()} roof sqft`,
+        rate: '$0.30/roof sqft + story add',
+        price: clientProposalCalculations.sidingWash,
+      });
+      addOnItems = itemizedBill.items.filter((item) => item.key !== 'siding');
+      total = clientProposalCalculations.sidingWash + addOnItems.reduce((sum, item) => sum + item.price, 0);
+      note = 'House siding wash selected. Other selected services are added.';
+    } else {
+      total = itemizedBill.total;
+    }
+
+    return {
+      items: [...packageItems, ...addOnItems],
+      total,
+      note,
+      priceAvailable,
+    };
+  }, [
+    selectedServices,
+    packageChoice,
+    carePlanTier,
+    fullHomeDetailReady,
+    itemizedBill,
+    clientProposalCalculations,
+    adjDriveway,
+    adjRoofFootprint,
+    adjStories,
+  ]);
+
+  const selectedPackageInclusions = useMemo(() => {
+    if (packageChoice === 'exterior_refresh') {
+      return [
+        'Exterior Soft Wash',
+        'Window Detail',
+      ];
+    }
+
+    if (packageChoice === 'full_home_detail') {
+      return [
+        'The Exterior Refresh',
+        'Driveway Restoration and walkways',
+        'Front Patio Restoration',
+        'Back Patio Restoration and entry',
+      ];
+    }
+
+    if (packageChoice === 'estate_care_plan') {
+      return [
+        `${carePlanTier === 'essential' ? '2x/year' : carePlanTier === 'premium' ? 'Quarterly' : 'Bi-monthly'} care plan`,
+        'Scheduled maintenance visits',
+        'Window and gutter inspection',
+        'Final scope confirmed on-site',
+      ];
+    }
+
+    return [];
+  }, [packageChoice, carePlanTier]);
 
   // Load Admin Leads
   const fetchAllLeads = async () => {
@@ -338,13 +613,14 @@ export default function App() {
     }
   }, [satStage, journeyStep]);
 
-  // Trigger Google Solar API and Gemini AI estimation pipeline
+  // Trigger satellite and property-record estimation pipeline
   const handleEstimateQuery = async (e: FormEvent) => {
     e.preventDefault();
     if (!address) {
       alert("Please entering a valid service address.");
       return;
     }
+    setEstimateLookupError("");
     setSatStage(0);
     setJourneyStep('estimating');
 
@@ -357,6 +633,12 @@ export default function App() {
 
       if (response.ok) {
         const data = await response.json();
+        if (!data.solarFound) {
+          setEstimateLookupError(GOOGLE_IMAGERY_ERROR);
+          setJourneyStep('input');
+          return;
+        }
+
         setEstimateInfo({
           propertyLat: data.propertyLat ?? undefined,
           propertyLng: data.propertyLng ?? undefined,
@@ -375,40 +657,85 @@ export default function App() {
         setAdjStories(data.stories);
         setAdjRoofFootprint(data.roofFootprintSqft);
         setAdjDriveway(data.drivewaySqft);
-        setAdjPatio(data.patioSqft ?? 0);
+        setAdjFrontPatio(data.patioSqft ?? 0);
+        setAdjBackPatio(0);
         setAdjWindows(data.windowSections);
         setAdjMaterial(data.exteriorMaterial);
+        setDrivewayPolygonComplete(false);
+        setFrontPatioPolygonComplete(false);
+        setBackPatioPolygonComplete(false);
+        setNoDriveway(false);
+        setNoFrontPatio(false);
+        setNoBackPatio(false);
+        setPolygonRequirementError("");
       } else {
         throw new Error("API responded with an error status.");
       }
     } catch (err) {
-      console.warn("Estimation call errored, utilizing premium fallback defaults.", err);
-      // Fallback calculations standard to avoid blocking customer
-      setEstimateInfo({
-        propertyLat: undefined,
-        propertyLng: undefined,
-        homeSizeSqft: 2400,
-        stories: 2,
-        roofFootprintSqft: 1400,
-        drivewaySqft: 900,
-        patioSqft: 0,
-        windowSections: 18,
-        exteriorMaterial: "Vinyl Siding",
-        confidenceExplanation: "Calculated using high-resolution Palo Alto baseline formulas. Tweak details below."
-      });
-      setAdjHomeSize(2400);
-      setAdjStories(2);
-      setAdjRoofFootprint(1400);
-      setAdjDriveway(900);
-      setAdjPatio(0);
-      setAdjWindows(18);
-      setAdjMaterial("Vinyl Siding");
+      console.warn("Estimate lookup failed.", err);
+      setEstimateLookupError(GOOGLE_IMAGERY_ERROR);
+      setJourneyStep('input');
     }
   };
 
   // Create lead record & store initial quotes
   const handlePackageConfirmation = () => {
+    if (!finalEstimate.priceAvailable) {
+      setPolygonRequirementError(finalEstimate.note);
+      return;
+    }
+
+    if (finalEstimate.items.length === 0 || finalEstimate.total <= 0) {
+      setPolygonRequirementError("Please select a package or at least one service.");
+      return;
+    }
+
+    if (packageChoice === 'full_home_detail') {
+      const missing = [
+        !drivewayPolygonComplete && !noDriveway ? 'driveway map points or No driveway' : '',
+        !frontPatioPolygonComplete && !noFrontPatio ? 'front patio map points or No front patio' : '',
+        !backPatioPolygonComplete && !noBackPatio ? 'back patio map points or No back patio' : '',
+      ].filter(Boolean);
+
+      if (missing.length > 0) {
+        setPolygonRequirementError(`Please complete: ${missing.join(', ')}.`);
+        return;
+      }
+    }
+
+    setPolygonRequirementError("");
     setJourneyStep('scheduling');
+  };
+
+  const buildWalkthroughEmailHref = (note = "") => {
+    const subject = `Stonevale walkthrough help - ${address || "Address pending"}`;
+    const body = [
+      "A homeowner needs help with the Stonevale quote flow.",
+      "",
+      `Address: ${address || "Not entered"}`,
+      `Name: ${customerName || "Not entered"}`,
+      `Phone: ${phone || "Not entered"}`,
+      `Email: ${email || "Not entered"}`,
+      "",
+      "Measurements entered so far:",
+      `Driveway: ${adjDriveway.toLocaleString()} sqft (${noDriveway ? "No driveway selected" : drivewayPolygonComplete ? "map points added" : "not complete"})`,
+      `Front patio: ${adjFrontPatio.toLocaleString()} sqft (${noFrontPatio ? "No front patio selected" : frontPatioPolygonComplete ? "map points added" : "not complete"})`,
+      `Back patio: ${adjBackPatio.toLocaleString()} sqft (${noBackPatio ? "No back patio selected" : backPatioPolygonComplete ? "map points added" : "not complete"})`,
+      `Roof sqft: ${adjRoofFootprint.toLocaleString()}`,
+      `Home sqft: ${adjHomeSize.toLocaleString()}`,
+      `Stories: ${adjStories}`,
+      `Final selected price: ${finalEstimate.priceAvailable ? `$${finalEstimate.total.toLocaleString()}` : finalEstimate.note}`,
+      "",
+      `Selected package: ${packageChoice ?? "none"}`,
+      note ? `Homeowner note: ${note}` : "Homeowner note: none",
+    ].join("\n");
+
+    return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+
+  const handleMeasureHelpSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    window.location.href = buildWalkthroughEmailHref(measureHelpNote);
   };
 
   const handleBookingSubmit = async (e: FormEvent) => {
@@ -420,12 +747,13 @@ export default function App() {
 
     // Capture pricing choice based on package selected
     let selectedPackageLabel = "";
-    if (packageChoice === 'exterior_refresh') selectedPackageLabel = "Exterior Refresh";
+    if (!packageChoice) selectedPackageLabel = "Selected Services";
+    else if (packageChoice === 'exterior_refresh') selectedPackageLabel = "Exterior Refresh";
     else if (packageChoice === 'full_home_detail') selectedPackageLabel = "Full Home Detail";
     else if (packageChoice === 'estate_care_plan') selectedPackageLabel = `Estate Care - ${carePlanTier.toUpperCase()}`;
     else if (packageChoice === 'single_driveway') selectedPackageLabel = "Single: Driveway Wash";
     else if (packageChoice === 'single_windows') selectedPackageLabel = "Single: Window Detail";
-    else if (packageChoice === 'single_siding') selectedPackageLabel = "Single: House Siding Wash";
+    else if (packageChoice === 'single_siding') selectedPackageLabel = "Single: Exterior Soft Wash";
 
     const payload = {
       customerName,
@@ -438,9 +766,11 @@ export default function App() {
       drivewaySqft: adjDriveway,
       windowSections: adjWindows,
       exteriorMaterial: adjMaterial,
-      packageSelected: packageChoice,
+      packageSelected: packageChoice ?? 'selected_services',
       selectedServices,
-      itemizedBill,
+      itemizedBill: finalEstimate,
+      finalPrice: finalEstimate.total,
+      selectedPackageLabel,
       source: 'qr_code'
     };
 
@@ -590,70 +920,105 @@ export default function App() {
     return 0;
   };
 
+  const getSelectedPackageDisplay = () => {
+    if (clientProposalCalculations.pricingReviewRequired) return 'Manual review required';
+    if (!packageChoice) return finalEstimate.total > 0 ? `$${finalEstimate.total.toLocaleString()}` : 'Select a package or service';
+    if (packageChoice === 'full_home_detail' && !fullHomeDetailReady) {
+      return 'Measure your driveway and patio using the tool above';
+    }
+    return `$${getSelectedPackagePrice().toLocaleString()}`;
+  };
+
   const handleDrivewayAreaChange = useCallback((sqft: number) => {
     if (sqft > 0) {
       setAdjDriveway(sqft);
+      setDrivewayPolygonComplete(true);
+      setNoDriveway(false);
+      setPolygonRequirementError("");
+    } else {
+      setAdjDriveway(0);
+      setDrivewayPolygonComplete(false);
     }
   }, []);
 
-  const handlePatioAreaChange = useCallback((sqft: number) => {
+  const handleFrontPatioAreaChange = useCallback((sqft: number) => {
     if (sqft > 0) {
-      setAdjPatio(sqft);
+      setAdjFrontPatio(sqft);
+      setFrontPatioPolygonComplete(true);
+      setNoFrontPatio(false);
+      setPolygonRequirementError("");
+    } else {
+      setAdjFrontPatio(0);
+      setFrontPatioPolygonComplete(false);
     }
   }, []);
+
+  const handleBackPatioAreaChange = useCallback((sqft: number) => {
+    if (sqft > 0) {
+      setAdjBackPatio(sqft);
+      setBackPatioPolygonComplete(true);
+      setNoBackPatio(false);
+      setPolygonRequirementError("");
+    } else {
+      setAdjBackPatio(0);
+      setBackPatioPolygonComplete(false);
+    }
+  }, []);
+
+  const markNoSurface = (type: 'driveway' | 'frontPatio' | 'backPatio') => {
+    setPolygonRequirementError("");
+
+    if (type === 'driveway') {
+      const next = !noDriveway;
+      setNoDriveway(next);
+      setDrivewayPolygonComplete(false);
+      if (next) {
+        setAdjDriveway(0);
+        setPolygonClearVersions((prev) => ({
+          ...prev,
+          driveway: prev.driveway + 1,
+        }));
+      }
+    } else if (type === 'frontPatio') {
+      const next = !noFrontPatio;
+      setNoFrontPatio(next);
+      setFrontPatioPolygonComplete(false);
+      if (next) {
+        setAdjFrontPatio(0);
+        setPolygonClearVersions((prev) => ({
+          ...prev,
+          frontPatio: prev.frontPatio + 1,
+        }));
+      }
+    } else {
+      const next = !noBackPatio;
+      setNoBackPatio(next);
+      setBackPatioPolygonComplete(false);
+      if (next) {
+        setAdjBackPatio(0);
+        setPolygonClearVersions((prev) => ({
+          ...prev,
+          backPatio: prev.backPatio + 1,
+        }));
+      }
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-[#0F1113] font-sans text-[#E0D8D0] flex flex-col antialiased">
+    <div className="min-h-screen font-sans flex flex-col antialiased">
       {/* BRAND & HEADER SECTION */}
-      <header className="sticky top-0 z-50 bg-[#0F1113]/90 backdrop-blur-md border-b border-white/10 shadow-sm transition-all">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
-          
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 border border-[#C5A059] flex items-center justify-center rotate-45 shadow-md">
-              <span className="-rotate-45 font-serif text-[#C5A059] font-bold text-xl">S</span>
-            </div>
-            <div className="flex flex-col leading-none">
-              <span className="text-[10px] uppercase tracking-widest text-[#C5A059] mb-1 font-bold">Stonevale</span>
-              <span className="font-serif text-lg tracking-wide text-[#E0D8D0]">Exterior Co.</span>
-            </div>
-          </div>
-
-          {/* VIEW SWITCHER */}
-          <div className="flex bg-white/[0.04] p-1 rounded-lg border border-white/10">
-            <button
-              onClick={() => { setActiveTab('portal'); setJourneyStep('input'); }}
-              className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded transition-all cursor-pointer ${
-                activeTab === 'portal'
-                  ? 'bg-[#C5A059] text-black shadow-sm font-bold'
-                  : 'text-white/60 hover:text-[#E0D8D0] hover:bg-white/5'
-              }`}
-            >
-              <MapPin className="h-3.5 w-3.5 animate-pulse" />
-              <span>Steward Scan</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('office')}
-              className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded transition-all cursor-pointer ${
-                activeTab === 'office'
-                  ? 'bg-[#C5A059] text-black shadow-sm font-bold'
-                  : 'text-white/60 hover:text-[#E0D8D0] hover:bg-white/5'
-              }`}
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Admin Office</span>
-            </button>
-          </div>
-
-          <div className="hidden lg:flex items-center gap-2 text-xs text-white/40 font-mono">
-            <span>Customer Hotline:</span>
-            <span className="font-semibold text-[#C5A059] tracking-wider">(800) 555-CARE</span>
-          </div>
-
+      <header className="bg-[#1c1c1c] border-b border-white/10">
+        <div className="max-w-7xl mx-auto px-8 h-[120px] flex items-center justify-center overflow-hidden">
+          <img
+            src={stonevaleLogo}
+            alt="Stonevale Exterior Co."
+            className="w-[308px] max-w-none h-auto object-contain block"
+          />
         </div>
       </header>
 
       {/* CORE FRAME CONTAINER */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col justify-start">
+      <main className="flex-1 w-full max-w-6xl mx-auto px-6 flex flex-col justify-start">
         <AnimatePresence mode="wait">
           
           {/* PORTAL VIEW (CLIENT PROPOSAL PIPELINE) */}
@@ -663,23 +1028,49 @@ export default function App() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
-              className="w-full max-w-5xl mx-auto"
+              className="w-full"
             >
               {journeyStep === 'input' && (
-                <div className="text-center max-w-2xl mx-auto py-8">
-                  <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-none text-xs font-semibold bg-[#C5A059]/10 text-[#C5A059] border border-[#C5A059]/30 mb-6 animate-pulse uppercase tracking-widest">
-                    <Sparkles className="h-3 w-3 text-[#C5A059]" />
-                    Real-Time Sat Stewardship Scan
-                  </span>
-                  
-                  <h2 className="text-4xl font-serif tracking-wide text-white mb-4">
-                    Stewardship Quote Engine
-                  </h2>
-                  <p className="text-sm text-white/60 mb-10 leading-relaxed max-w-xl mx-auto font-sans">
-                    We protect and present fine estates. Scan your property satellite coordinates to generate a guaranteed, premium restoration estimate instantly.
-                  </p>
+                <div className="w-full py-8">
+                  <div className="w-full max-w-5xl mx-auto bg-cover bg-center" style={{backgroundImage: `url(${bannerPhoto})`}}>
+                    <div className="relative">
+                      <div className="absolute inset-0 bg-[#1c1c1c]/60" />
+                      <div className="w-full h-[220px] md:h-[300px] px-6 md:px-10 flex flex-col justify-center relative z-10">
+                        <h1 className="text-4xl md:text-5xl font-serif text-white">Stewardship Quote Engine</h1>
+                        <p className="text-sm text-white/60 mt-2">Instant quote. Your date confirmed within 48 hours.</p>
+                      </div>
+                    </div>
+                  </div>
 
-                  <form onSubmit={handleEstimateQuery} className="bg-[#131619] p-6 sm:p-10 rounded-none border border-white/10 shadow-2xl text-left">
+                  <div className="mt-6 flex justify-center">
+                    <div className="inline-flex bg-[#131619] border border-white/10 p-1">
+                      <button
+                        type="button"
+                        onClick={() => setStartMode('single')}
+                        className={`px-5 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                          startMode === 'single'
+                            ? 'bg-[#C5A059] text-black'
+                            : 'text-white/55 hover:text-white'
+                        }`}
+                      >
+                        Single Property
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStartMode('csv')}
+                        className={`px-5 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                          startMode === 'csv'
+                            ? 'bg-[#C5A059] text-black'
+                            : 'text-white/55 hover:text-white'
+                        }`}
+                      >
+                        CSV Batch Import
+                      </button>
+                    </div>
+                  </div>
+
+                  {startMode === 'single' ? (
+                  <form onSubmit={handleEstimateQuery} className="bg-[#131619] p-6 sm:p-8 rounded-none border border-white/10 shadow-2xl text-left mt-6 w-full">
                     <div className="mb-6">
                       <label className="block text-xs uppercase tracking-wider font-semibold text-white/80 mb-3 font-mono">
                         Step 1: Enter Your Estate Street Address
@@ -696,9 +1087,30 @@ export default function App() {
                         />
                       </div>
                       <p className="text-[10px] text-white/40 mt-2 font-mono">
-                        Powered by Google Solar API satellite building footprint parsing & Gemini grounding.
+                        Powered by satellite building footprint review and property records.
                       </p>
+                      {estimateLookupError && (
+                        <div className="mt-3 border border-[#C5A059]/30 bg-[#C5A059]/10 p-4 text-sm text-white/75">
+                          <p>
+                            {estimateLookupError}{" "}
+                            <a
+                              href={buildWalkthroughEmailHref("Google imagery could not access this home. Please schedule a free walkthrough.")}
+                              className="font-semibold text-[#C5A059] underline underline-offset-4"
+                            >
+                              Schedule a free walkthrough instead.
+                            </a>
+                          </p>
+                          <p className="mt-2 text-xs text-white/50">
+                            Stuck? Call or text {SUPPORT_PHONE}, or email{" "}
+                            <a href={`mailto:${SUPPORT_EMAIL}`} className="text-[#C5A059] underline underline-offset-4">
+                              {SUPPORT_EMAIL}
+                            </a>.
+                          </p>
+                        </div>
+                      )}
                     </div>
+
+
 
                     <div className="mb-8">
                       <label className="block text-xs uppercase tracking-wider font-semibold text-white/80 mb-3 font-mono">
@@ -735,7 +1147,7 @@ export default function App() {
                           </div>
                           <div>
                             <span className="font-serif block text-white text-sm">Single Surface Restoration Only</span>
-                            <span className="text-xs text-white/50 mt-1 block">Estimate only a dedicated driveway flatwork, window sections, or house cladding wash.</span>
+                            <span className="text-xs text-white/50 mt-1 block">Estimate only a dedicated driveway flatwork, windows, or house cladding wash.</span>
                           </div>
                         </div>
                       </div>
@@ -750,12 +1162,15 @@ export default function App() {
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </form>
+                  ) : (
+                    <CsvBatchImport />
+                  )}
                 </div>
               )}
 
               {/* SATELLITE SCAN ANIMATION EFFECT */}
               {journeyStep === 'estimating' && (
-                <div className="max-w-xl mx-auto py-16 text-center">
+                <div className="w-full py-16 text-center">
                   
                   {/* Radar scanner visual */}
                   <div className="relative h-44 w-44 mx-auto mb-10 flex items-center justify-center">
@@ -792,202 +1207,282 @@ export default function App() {
 
               {/* CLIENT CUSTOM ESTIMATION PROPOSAL VIEW */}
               {journeyStep === 'proposal' && estimateInfo && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 py-4">
-                  
-                  {/* Left Column: Sizing Parameters (Adjustable Sliders) */}
-                  <div className="lg:col-span-4 space-y-6 animate-fade-in">
-                    <div className="bg-[#131619] text-[#E0D8D0] p-6 rounded-none border border-white/10">
-                      <div className="flex items-center gap-2.5 mb-3 border-b border-white/10 pb-3">
-                        <Layers className="h-5 w-5 text-[#C5A059]" />
-                        <h4 className="text-sm font-serif font-semibold uppercase tracking-wider text-white">Satellite Measurements</h4>
-                      </div>
-                      <p className="text-xs text-white/50 leading-relaxed font-sans mb-5">
-                        Google Solar and Gemini grounded tax indices estimated these parameters. Fine-tune any element to adjust quote values in real time.
-                      </p>
+                <div className="grid grid-cols-1 gap-8 py-4">
 
-                      <div className="space-y-5">
-                        <div>
-                          <div className="flex justify-between text-xs font-mono mb-2">
-                            <span className="text-white/70">Total Finished Living Sqft:</span>
-                            <span className="text-[#C5A059] text-xs font-bold">{adjHomeSize.toLocaleString()} sqft</span>
-                          </div>
-                          <input 
-                            type="range" min="1000" max="8000" step="50"
-                            value={adjHomeSize} onChange={(e) => setAdjHomeSize(Number(e.target.value))}
-                            className="w-full accent-[#C5A059] bg-[#0F1113] rounded-none appearance-none h-1 border border-white/10"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between text-xs font-mono mb-2">
-                            <span className="text-white/70">Rooftop Footprint Size:</span>
-                            <span className="text-[#C5A059] text-xs font-bold">{adjRoofFootprint.toLocaleString()} sqft</span>
-                          </div>
-                          <input 
-                            type="range" min="500" max="5000" step="50"
-                            value={adjRoofFootprint} onChange={(e) => setAdjRoofFootprint(Number(e.target.value))}
-                            className="w-full accent-[#C5A059] bg-[#0F1113] rounded-none appearance-none h-1 border border-white/10"
-                          />
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between text-xs font-mono mb-2">
-                            <span className="text-white/70">Driveway & Flatwork Sqft:</span>
-                            <span className="text-[#C5A059] text-xs font-bold">{adjDriveway.toLocaleString()} sqft</span>
-                          </div>
-                          <input 
-                            type="range" min="200" max="4000" step="50"
-                            value={adjDriveway} onChange={(e) => setAdjDriveway(Number(e.target.value))}
-                            className="w-full accent-[#C5A059] bg-[#0F1113] rounded-none appearance-none h-1 border border-white/10"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 pt-2">
-                          <div>
-                            <label className="block text-[10px] text-white/50 font-mono uppercase tracking-wider mb-1.5">Building Stories</label>
-                            <select
-                              value={adjStories}
-                              onChange={(e) => setAdjStories(Number(e.target.value))}
-                              className="w-full bg-[#0F1113] text-[#E0D8D0] rounded-none border border-white/20 py-2 pl-2 text-xs font-sans focus:outline-none focus:border-[#C5A059]"
-                            >
-                              <option value="1">1 Story (Ranch)</option>
-                              <option value="2">2 Stories (Estate)</option>
-                              <option value="3">3 Stories (Manor)</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-white/50 font-mono uppercase tracking-wider mb-1.5">Exterior Cladding</label>
-                            <select
-                              value={adjMaterial}
-                              onChange={(e) => setAdjMaterial(e.target.value)}
-                              className="w-full bg-[#0F1113] text-[#E0D8D0] rounded-none border border-white/20 py-2 pl-2 text-xs font-sans focus:outline-none focus:border-[#C5A059]"
-                            >
-                              <option value="Vinyl Siding">Vinyl Siding</option>
-                              <option value="Red Brick">Red Brick</option>
-                              <option value="Stucco">Stucco</option>
-                              <option value="Hardie Board">Hardie Board</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between text-xs font-mono mb-2 pt-2">
-                            <span className="text-white/70">Estimated Window Sections:</span>
-                            <span className="text-[#C5A059] text-xs font-bold">{adjWindows} Sections</span>
-                          </div>
-                          <input 
-                            type="range" min="8" max="60" step="1"
-                            value={adjWindows} onChange={(e) => setAdjWindows(Number(e.target.value))}
-                            className="w-full accent-[#C5A059] bg-[#0F1113] rounded-none appearance-none h-1 border border-white/10"
-                          />
+                  {/* Proposal content full width */}
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="mb-4 w-full">
+                        <div className="w-full h-64 md:h-80 bg-cover bg-center relative" style={{backgroundImage: `url(${bannerPhoto})`}}>
+                        <div className="absolute inset-0 bg-[#1c1c1c]/60" />
+                        <div className="relative z-10 w-full h-64 md:h-80 flex items-center justify-between">
+                          <img src={stonevaleLogo} alt="Stonevale Exterior Co." className="h-12 md:h-14 w-auto object-contain" />
+                          <div className="text-right text-sm text-white/60">Prepared from satellite imagery</div>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="p-5 bg-white/[0.02] border border-white/10 text-xs text-white/70 font-sans space-y-2 rounded-none">
-                      <div className="flex items-center gap-1.5 font-bold text-white uppercase font-mono tracking-wider text-[10px] border-b border-white/5 pb-2">
-                        <Activity className="h-3.5 w-3.5 text-[#C5A059]" />
-                        <span>AI Intelligence Summary</span>
+                      <div className="w-full py-8">
+                        <h3 className="text-2xl font-serif text-[#E0D8D0] tracking-wide">Your Customized Service Scenarios</h3>
+                        <p className="text-[10px] text-[#C5A059] font-mono tracking-widest mt-1 uppercase">LOCKED CONTRACT QUOTE RATES PRESET</p>
                       </div>
-                      <p className="italic leading-relaxed">
-                        "{estimateInfo.confidenceExplanation}"
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Right Column: Pricing proposals */}
-                  <div className="lg:col-span-8 space-y-6 animate-fade-in">
-                    <div>
-                      <h3 className="text-2xl font-serif text-[#E0D8D0] tracking-wide">Your Customized Service Scenarios</h3>
-                      <p className="text-[10px] text-[#C5A059] font-mono tracking-widest mt-1 uppercase">LOCKED CONTRACT QUOTE RATES PRESET</p>
                     </div>
 
                     <div className="bg-[#131619] p-6 rounded-none border border-white/10">
                       <div className="flex items-center gap-2.5 mb-3 border-b border-white/10 pb-3">
                         <Sparkles className="h-4 w-4 text-[#C5A059]" />
                         <div>
-                          <h4 className="text-sm font-serif font-semibold uppercase tracking-wider text-white">Choose Surfaces to Quote</h4>
+                          <h4 className="text-sm font-serif font-semibold uppercase tracking-wider text-white">Choose Surfaces to Detail</h4>
                           <p className="text-[10px] text-white/50 mt-1">Build an itemized estimate from measured and estimated property data.</p>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
                         {[
-                          ['roof', 'Roof'],
-                          ['driveway', 'Driveway / Flatwork'],
-                          ['patio', 'Patio / Entry Detail'],
-                          ['gutters', 'Gutters'],
-                          ['windows', 'Windows'],
-                          ['siding', 'Siding'],
+                          ['siding', 'Exterior Soft Wash'],
+                          ['windows', 'Window Detail'],
+                          ['driveway', 'Driveway Restoration'],
+                          ['frontPatio', 'Front Patio Restoration'],
+                          ['backPatio', 'Back Patio Restoration'],
                         ].map(([key, label]) => {
                           const serviceKey = key as keyof typeof selectedServices;
                           return (
-                            <button
-                              key={key}
-                              type="button"
-                              onClick={() => toggleService(serviceKey)}
-                              className={`p-4 border rounded-none text-xs uppercase tracking-wider font-mono transition-all ${
-                                selectedServices[serviceKey]
-                                  ? 'bg-[#C5A059] text-black border-[#C5A059] font-bold'
-                                  : 'bg-[#0F1113] text-white/60 border-white/10 hover:text-white hover:border-white/30'
-                              }`}
-                            >
-                              {label}
-                            </button>
+                            <div key={key}>
+                              <button
+                                type="button"
+                                onClick={() => toggleService(serviceKey)}
+                                className={`w-full h-16 px-4 border rounded-none text-xs uppercase tracking-wider font-mono transition-all flex items-center justify-center text-center ${
+                                  selectedServices[serviceKey]
+                                    ? 'bg-[#C5A059] text-black border-[#C5A059] font-bold'
+                                    : 'bg-[#0F1113] text-white/60 border-white/10 hover:text-white hover:border-white/30'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                              {serviceKey === 'siding' && (
+                                <WhatThisEntails
+                                  summary="Exterior Soft Wash is a low-pressure wash for siding, brick, stone, or stucco."
+                                  items={['Rinse exterior walls', 'Wash exterior trim', 'Wash gutter faces as part of the house']}
+                                  scope="Roof cleaning is walkthrough-only."
+                                />
+                              )}
+                              {serviceKey === 'windows' && (
+                                <WhatThisEntails
+                                  summary="Window Detail means exterior glass and sills are hand-detailed."
+                                  items={['Detail exterior glass', 'Wipe accessible exterior sills', 'Review visible hard-water spots']}
+                                  scope="Interior glass is not included in this quote."
+                                />
+                              )}
+                              {serviceKey === 'driveway' && (
+                                <WhatThisEntails
+                                  summary="Driveway Restoration is a deep clean for the driveway and main walkways."
+                                  items={['Clean driveway surface', 'Clean main walkways', 'Confirm edges before the job']}
+                                  scope="Measured square footage sets the instant estimate."
+                                />
+                              )}
+                              {serviceKey === 'frontPatio' && (
+                                <WhatThisEntails
+                                  summary="Front Patio Restoration is a deep clean for the front patio and entry."
+                                  items={['Clean front patio', 'Clean entry landing', 'Confirm surface type on-site']}
+                                  scope="Final surface and price are confirmed after review."
+                                />
+                              )}
+                              {serviceKey === 'backPatio' && (
+                                <WhatThisEntails
+                                  summary="Back Patio Restoration is a deep clean for the back patio."
+                                  items={['Clean back patio', 'Include deck or pool-deck area in this measurement', 'Confirm surface type on-site']}
+                                  scope="Deck and pool-deck pricing rides inside the back patio measurement."
+                                />
+                              )}
+                            </div>
                           );
                         })}
                       </div>
+                      <p className="mt-3 text-[10px] text-white/45 leading-relaxed">
+                        * Gutter faces are washed as part of the house. Clearing debris inside gutters is separate and not included. Roof cleaning is walkthrough-only. Book an onsite walkthrough if you want the roof reviewed.
+                      </p>
                     </div>
 
                     {estimateInfo.propertyLat && estimateInfo.propertyLng && (
-                      <div className="bg-[#131619] p-6 rounded-none border border-white/10">
-                        <div className="flex items-center gap-2.5 mb-4 border-b border-white/10 pb-3">
-                          <MapPin className="h-4 w-4 text-[#C5A059]" />
-                          <div>
-                            <h4 className="text-sm font-serif font-semibold uppercase tracking-wider text-white">Measure Driveway / Flatwork</h4>
-                            <p className="text-[10px] text-white/50 mt-1">Click the driveway corners on the satellite map. The measured sqft will update the driveway price automatically.</p>
+                      <>
+                        <div className="bg-[#131619] p-6 rounded-none border border-white/10">
+                          <div className="flex flex-col gap-3">
+                            <div>
+                              <span className="block text-[10px] text-white/50 font-mono uppercase tracking-wider mb-2">Story Count</span>
+                              <p className="text-[11px] text-white/50">Controls exterior window pricing: 1-story uses $0.10/roof sqft, 2-story+ uses $0.16/roof sqft.</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setAdjStories(1)}
+                                className={`px-3 py-1 text-xs rounded-none border ${adjStories === 1 ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                              >
+                                1 Story
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAdjStories(2)}
+                                className={`px-3 py-1 text-xs rounded-none border ${adjStories === 2 ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                              >
+                                2 Stories
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAdjStories(3)}
+                                className={`px-3 py-1 text-xs rounded-none border ${adjStories === 3 ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                              >
+                                3+ Stories
+                              </button>
+                            </div>
                           </div>
                         </div>
+
+                        <div className="bg-[#131619] p-6 rounded-none border border-white/10">
+                          <div className="flex items-center gap-2.5 mb-4 border-b border-white/10 pb-3">
+                            <MapPin className="h-4 w-4 text-[#C5A059]" />
+                            <div>
+                              <h4 className="text-sm font-serif font-semibold uppercase tracking-wider text-white">Measure Driveway and Patio Areas</h4>
+                              <p className="text-[10px] text-white/50 mt-1">Click each surface corner on the satellite map. The measured sqft updates the matching price automatically.</p>
+                            </div>
+                          </div>
                         <div className="flex items-center justify-between mb-4 gap-4">
                           <div>
                             <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Driveway:</span>
                             <div className="text-lg font-bold text-[#C5A059]">{adjDriveway.toLocaleString()} sqft</div>
                           </div>
                           <div>
-                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Patio:</span>
-                            <div className="text-lg font-bold text-[#C5A059]">{adjPatio.toLocaleString()} sqft</div>
+                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Front Patio:</span>
+                            <div className="text-lg font-bold text-[#C5A059]">{adjFrontPatio.toLocaleString()} sqft</div>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">Back Patio:</span>
+                            <div className="text-lg font-bold text-[#C5A059]">{adjBackPatio.toLocaleString()} sqft</div>
                           </div>
                           <div className="ml-auto flex items-center gap-2">
                             <button
                               onClick={() => setActivePolygonType('driveway')}
                               className={`px-3 py-1 text-xs rounded-none border ${activePolygonType === 'driveway' ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
                             >
-                              Draw: Driveway
+                              Driveway
                             </button>
                             <button
-                              onClick={() => setActivePolygonType('patio')}
-                              className={`px-3 py-1 text-xs rounded-none border ${activePolygonType === 'patio' ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                              onClick={() => setActivePolygonType('frontPatio')}
+                              className={`px-3 py-1 text-xs rounded-none border ${activePolygonType === 'frontPatio' ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
                             >
-                              Draw: Patio
+                              Front Patio
+                            </button>
+                            <button
+                              onClick={() => setActivePolygonType('backPatio')}
+                              className={`px-3 py-1 text-xs rounded-none border ${activePolygonType === 'backPatio' ? 'bg-[#C5A059] text-black border-[#C5A059]' : 'bg-[#0F1113] text-white/60 border-white/10'}`}
+                            >
+                              Back Patio
                             </button>
                           </div>
                         </div>
 
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                          <button
+                            type="button"
+                            onClick={() => markNoSurface('driveway')}
+                            className={`p-3 border text-left text-xs transition-all ${noDriveway ? 'bg-[#C5A059] text-black border-[#C5A059] font-bold' : 'bg-[#0F1113] text-white/60 border-white/10 hover:text-white'}`}
+                          >
+                            No driveway
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => markNoSurface('frontPatio')}
+                            className={`p-3 border text-left text-xs transition-all ${noFrontPatio ? 'bg-[#C5A059] text-black border-[#C5A059] font-bold' : 'bg-[#0F1113] text-white/60 border-white/10 hover:text-white'}`}
+                          >
+                            No front patio
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => markNoSurface('backPatio')}
+                            className={`p-3 border text-left text-xs transition-all ${noBackPatio ? 'bg-[#C5A059] text-black border-[#C5A059] font-bold' : 'bg-[#0F1113] text-white/60 border-white/10 hover:text-white'}`}
+                          >
+                            No back patio
+                          </button>
+                        </div>
+                        <p className="mb-4 text-[11px] text-white/50 leading-relaxed">
+                          Also have a wood deck, or a stone, tile, or flagstone area around a pool you would like cleaned? Include it in this measurement. We will confirm the surface and finalize the price when we look at the job.
+                        </p>
+
+                        <div className={`mb-4 border bg-[#0F1113] transition-all ${measureTutorialOpen ? 'border-[#C5A059]/40 p-5' : 'border-white/10 p-3'}`}>
+                          <button
+                            type="button"
+                            onClick={() => setMeasureTutorialOpen((open) => !open)}
+                            className="w-full flex items-center justify-between gap-4 text-left"
+                          >
+                            <span>
+                              <span className="block text-sm font-serif text-white">Need a quick tutorial? Click here.</span>
+                            </span>
+                            <span className="shrink-0 text-[10px] uppercase tracking-wider font-mono text-[#C5A059]">
+                              {measureTutorialOpen ? 'Close' : 'Open'}
+                            </span>
+                          </button>
+
+                          {measureTutorialOpen && (
+                            <div className="mt-5 grid grid-cols-1 xl:grid-cols-[1.45fr_0.8fr] gap-5 items-start">
+                              <div className="border border-white/10 bg-black/40 p-3">
+                                <video
+                                  src={measureTutorialVideo}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                  className="w-full max-h-[560px] border border-white/10 bg-black object-contain"
+                                />
+                                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-white/65 leading-relaxed">
+                                  <p><span className="text-[#C5A059] font-bold">1.</span> Choose Driveway, Front Patio, or Back Patio.</p>
+                                  <p><span className="text-[#C5A059] font-bold">2.</span> Tap each corner around that surface on the satellite map.</p>
+                                  <p><span className="text-[#C5A059] font-bold">3.</span> Switch surfaces, or select No driveway/patio.</p>
+                                </div>
+                              </div>
+
+                              <form onSubmit={handleMeasureHelpSubmit} className="border border-white/10 bg-[#131619] p-5">
+                                <h5 className="text-lg font-serif text-white">Need help?</h5>
+                                <p className="text-xs text-white/55 mt-2 leading-relaxed">
+                                  Send this to Stonevale with your address and current measurements.
+                                </p>
+                                <textarea
+                                  value={measureHelpNote}
+                                  onChange={(event) => setMeasureHelpNote(event.target.value)}
+                                  placeholder="Optional: tell us where you got stuck."
+                                  className="mt-4 w-full min-h-[140px] bg-[#0F1113] border border-white/10 p-3 text-sm text-white/80 placeholder-white/30 focus:outline-none focus:border-[#C5A059]"
+                                />
+                                <button
+                                  type="submit"
+                                  className="mt-4 w-full bg-[#C5A059] text-black text-xs font-bold uppercase tracking-wider py-3.5"
+                                >
+                                  Email Stonevale for help
+                                </button>
+                                <p className="mt-4 text-xs text-white/55 leading-relaxed">
+                                  Stuck? Call or text {SUPPORT_PHONE}, or email{" "}
+                                  <a href={`mailto:${SUPPORT_EMAIL}`} className="text-[#C5A059] underline underline-offset-4">
+                                    {SUPPORT_EMAIL}
+                                  </a>.
+                                </p>
+                              </form>
+                            </div>
+                          )}
+                        </div>
+
                         <DrivewayMeasureMap
-                          lat={estimateInfo.propertyLat}
-                          lng={estimateInfo.propertyLng}
+                          lat={estimateInfo?.propertyLat ?? 0}
+                          lng={estimateInfo?.propertyLng ?? 0}
                           activeType={activePolygonType}
+                          clearVersions={polygonClearVersions}
                           onAreaChangeDriveway={handleDrivewayAreaChange}
-                          onAreaChangePatio={handlePatioAreaChange}
+                          onAreaChangeFrontPatio={handleFrontPatioAreaChange}
+                          onAreaChangeBackPatio={handleBackPatioAreaChange}
                         />
                       </div>
+                      </>
                     )}
 
-                    <div className="bg-[#131619] p-6 rounded-none border border-white/10">
+                    <div className="hidden bg-[#131619] p-6 rounded-none border border-white/10">
                       <div className="flex items-center justify-between mb-4">
                         <div>
                           <h4 className="text-sm font-serif text-white">Itemized Estimate</h4>
-                          <p className="text-[10px] text-white/40 mt-1">Roof sqft from Google Solar. Driveway, gutters, and windows estimated for review.</p>
+                          <p className="text-[10px] text-white/40 mt-1">Roof sqft from Google Solar. Driveway, patios, and windows estimated for review.</p>
                         </div>
                         <span className="text-[#C5A059] font-bold text-xl">${itemizedBill.total.toLocaleString()}</span>
                       </div>
@@ -1016,7 +1511,7 @@ export default function App() {
                       
                       {/* Package 1: Refresh */}
                       <div 
-                        onClick={() => setPackageChoice('exterior_refresh')}
+                        onClick={() => togglePackageChoice('exterior_refresh')}
                         className={`p-6 rounded-none border cursor-pointer relative transition-all flex flex-col justify-between h-full ${
                           packageChoice === 'exterior_refresh' 
                             ? 'border-[#C5A059] bg-[#1a1e22] ring-1 ring-[#C5A059] shadow-lg' 
@@ -1028,30 +1523,40 @@ export default function App() {
                             <span className="text-[10px] font-bold text-white/40 font-mono tracking-widest uppercase">OPTION 01</span>
                             {packageChoice === 'exterior_refresh' && <Check className="h-4 w-4 text-[#C5A059]" />}
                           </div>
-                          <h4 className="font-serif text-white text-md tracking-wide mb-1.5">Exterior Refresh</h4>
-                          <p className="text-xs text-white/50 leading-relaxed font-sans">The entry first-care job. Wow homeowners right in the door.</p>
+                          <h4 className="font-serif text-white text-md tracking-wide mb-1.5">The Exterior Refresh</h4>
+                          <p className="text-xs text-white/50 leading-relaxed font-sans">The first visit. The whole exterior brought back.</p>
                           
                           <ul className="text-[11px] text-white/70 mt-4 space-y-1.5 bg-[#0F1113] p-3 border border-white/10 rounded-none">
                             <li className="flex items-center gap-1.5">
                               <span className="text-[#C5A059] font-semibold">&#8226;</span>
-                              <span>Whole house soft wash</span>
+                              <span>Exterior Soft Wash</span>
                             </li>
                             <li className="flex items-center gap-1.5">
                               <span className="text-[#C5A059] font-semibold">&#8226;</span>
-                              <span>Exterior Window detail</span>
+                              <span>Window Detail</span>
                             </li>
                           </ul>
+                          <WhatThisEntails
+                            summary="Exterior Refresh includes a soft wash for the house, exterior trim, gutter faces, and exterior windows."
+                            items={['Soft wash house', 'Wash exterior trim and gutter faces', 'Detail exterior windows']}
+                            scope="Gutter faces are included. Clearing debris from inside gutters is separate."
+                          />
                         </div>
                         
                         <div className="pt-5 border-t border-white/5 mt-5">
                           <span className="text-white/40 text-[9px] uppercase tracking-wider block font-mono">One-Time Quote</span>
-                          <span className="text-3xl font-serif text-[#C5A059]">${clientProposalCalculations.exteriorRefresh.toLocaleString()}</span>
+                          <span className="text-3xl font-serif text-[#C5A059]">
+                            {clientProposalCalculations.pricingReviewRequired
+                              ? 'Manual review required'
+                              : `from $${clientProposalCalculations.exteriorRefresh.toLocaleString()}`}
+                          </span>
+                          <div className="text-xs text-white/50 mt-1">Final figure confirmed on a short walkthrough.</div>
                         </div>
                       </div>
 
                       {/* Package 2: Full Home Detail */}
                       <div 
-                        onClick={() => setPackageChoice('full_home_detail')}
+                        onClick={() => togglePackageChoice('full_home_detail')}
                         className={`p-6 rounded-none border cursor-pointer relative transition-all flex flex-col justify-between h-full ${
                           packageChoice === 'full_home_detail' 
                             ? 'border-2 border-[#C5A059] bg-[#1a1e22] shadow-2xl' 
@@ -1064,42 +1569,54 @@ export default function App() {
                         </div>
 
                         <div>
-                          <div className="flex justify-between items-start mb-3 mt-1">
+                          <div className="flex justify-between items-start mb-3">
                             <span className="text-[10px] font-bold text-[#C5A059] font-mono tracking-widest uppercase">OPTION 02</span>
                             {packageChoice === 'full_home_detail' && <Check className="h-4 w-4 text-[#C5A059]" />}
                           </div>
-                          <h4 className="font-serif text-white text-md tracking-wide mb-1.5">Full Home Detail</h4>
-                          <p className="text-xs text-white/50 leading-relaxed font-sans">Complete protective envelope restoration in a single visit.</p>
+                          <h4 className="font-serif text-white text-md tracking-wide mb-1.5">The Full Home Detail</h4>
+                          <p className="text-xs text-white/50 leading-relaxed font-sans">The entire property, done right in one visit.</p>
                           
-                          <ul className="text-[10px] text-white/70 mt-4 space-y-1.5 bg-[#0F1113] p-3 border border-white/10 rounded-none">
+                          <ul className="text-[10px] text-white/70 mt-4 space-y-1.5 bg-[#0F1113] p-3 border border-white/10 rounded-none min-h-[88px]">
                             <li className="flex items-center gap-1">
                               <span className="text-[#C5A059] font-semibold mr-1">&#8226;</span>
-                              <span>House Soft Wash & windows</span>
+                              <span>The Exterior Refresh</span>
                             </li>
                             <li className="flex items-center gap-1">
                               <span className="text-[#C5A059] font-semibold mr-1">&#8226;</span>
-                              <span>Driveway + walkways restoration</span>
+                              <span>Driveway Restoration and walkways</span>
                             </li>
                             <li className="flex items-center gap-1">
                               <span className="text-[#C5A059] font-semibold mr-1">&#8226;</span>
-                              <span>Back patio & entry detail</span>
+                              <span>Front Patio Restoration</span>
                             </li>
                             <li className="flex items-center gap-1">
                               <span className="text-[#C5A059] font-semibold mr-1">&#8226;</span>
-                              <span>Gutter face brightening</span>
+                              <span>Back Patio Restoration and entry</span>
                             </li>
                           </ul>
+                          <WhatThisEntails
+                            summary="Full Home Detail includes Exterior Refresh plus driveway, walkways, patios, and entry."
+                            items={['Exterior Soft Wash and Window Detail', 'Driveway Restoration and walkways', 'Front Patio Restoration', 'Back Patio Restoration and entry']}
+                            scope="Deck and pool-deck areas ride inside the back patio measurement."
+                          />
                         </div>
                         
                         <div className="pt-5 border-t border-white/5 mt-5">
                           <span className="text-[#C5A059] text-[9px] uppercase tracking-wider block font-mono">Total One-Time Quote</span>
-                          <span className="text-3xl font-serif text-[#C5A059]">${clientProposalCalculations.fullHomeDetail.toLocaleString()}</span>
+                          <span className="text-3xl font-serif text-[#C5A059]">
+                            {clientProposalCalculations.pricingReviewRequired
+                              ? 'Manual review required'
+                              : fullHomeDetailReady
+                              ? `from $${clientProposalCalculations.fullHomeDetail.toLocaleString()}`
+                              : 'Measure your driveway and patio using the tool above'}
+                          </span>
+                          <div className="text-xs text-white/50 mt-1">Final figure confirmed on a short walkthrough.</div>
                         </div>
                       </div>
 
                       {/* Package 3: Estate Care Plan (Recurring monthly upsell) */}
                       <div 
-                        onClick={() => setPackageChoice('estate_care_plan')}
+                        onClick={() => togglePackageChoice('estate_care_plan')}
                         className={`p-6 rounded-none border cursor-pointer relative transition-all flex flex-col justify-between h-full ${
                           packageChoice === 'estate_care_plan' 
                             ? 'border-[#C5A059] bg-[#1a1e22] ring-1 ring-[#C5A059] shadow-lg' 
@@ -1111,11 +1628,11 @@ export default function App() {
                             <span className="text-[10px] font-bold text-white/40 font-mono tracking-widest uppercase">ESTATE CARE</span>
                             {packageChoice === 'estate_care_plan' && <Check className="h-4 w-4 text-[#C5A059]" />}
                           </div>
-                          <h4 className="font-serif text-white text-md tracking-wide mb-1.5">Estate Care Plan</h4>
-                          <p className="text-xs text-white/50 leading-relaxed font-sans">Planting the seed. Ongoing rotation billing monthly.</p>
+                          <h4 className="font-serif text-white text-md tracking-wide mb-1.5">The Estate Care Plan</h4>
+                          <p className="text-xs text-white/50 leading-relaxed font-sans">Year-round care, so you never think about it.</p>
 
                           {/* Plan tier slider toggle if estate selected */}
-                          <div className="mt-3.5 grid grid-cols-3 gap-1 p-1 bg-[#0F1113] border border-white/10 rounded-none text-[9px] font-mono">
+                          <div className="mt-4 grid grid-cols-3 gap-1 p-1 bg-[#0F1113] border border-white/10 rounded-none text-[9px] font-mono">
                             <button 
                               onClick={(e) => { e.stopPropagation(); setCarePlanTier('essential'); }}
                               className={`py-1 rounded-none text-center cursor-pointer uppercase tracking-wider ${carePlanTier === 'essential' ? 'bg-[#C5A059] text-black font-bold' : 'text-white/60 hover:text-white'}`}
@@ -1136,14 +1653,30 @@ export default function App() {
                             </button>
                           </div>
                           
-                          <p className="text-[10px] text-white/40 italic mt-3.5 text-center leading-normal">
-                            "Book today, try our work, upsell signature Care on-site."
-                          </p>
+                          <div className="mt-3 bg-[#0F1113] border border-white/10 p-3 text-[11px] text-white/65 min-h-[118px]">
+                            <p className="leading-relaxed text-white/70">
+                              Estate Care Plan is scheduled maintenance with windows, gutter inspection, report, and priority scheduling.
+                            </p>
+                            <ul className="mt-3 space-y-1.5">
+                              {['Scheduled maintenance visits', 'Windows and gutter inspection', 'Service report', 'Priority scheduling'].map((item) => (
+                                <li key={item} className="flex gap-2">
+                                  <span className="text-[#C5A059]">&#8226;</span>
+                                  <span>{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="mt-3 pt-3 border-t border-white/10 text-white/45">Plan scope is confirmed on-site.</p>
+                          </div>
                         </div>
                         
                         <div className="pt-5 border-t border-white/5 mt-5">
                           <span className="text-white/40 text-[9px] uppercase tracking-wider block font-mono capitalize">Care: {carePlanTier} subscription</span>
-                          <span className="text-2xl font-serif text-[#C5A059]">${clientProposalCalculations.estateCarePlans[carePlanTier]}<span className="text-xs text-white/40 font-sans font-normal"> / mo</span></span>
+                          <span className="text-2xl font-serif text-[#C5A059]">
+                            {clientProposalCalculations.pricingReviewRequired
+                              ? 'Manual review required'
+                              : <>from ${clientProposalCalculations.estateCarePlans[carePlanTier]}<span className="text-xs text-white/40 font-sans font-normal"> / mo</span></>}
+                          </span>
+                          <div className="text-xs text-white/50 mt-1">Final figure confirmed on a short walkthrough.</div>
                         </div>
                       </div>
 
@@ -1155,36 +1688,147 @@ export default function App() {
                         <span className="text-[10px] font-bold text-[#C5A059] font-mono uppercase tracking-widest">Fast Single Line Items Check</span>
                         <span className="text-[10px] bg-[#C5A059]/10 text-[#C5A059] font-bold px-2 py-0.5 border border-[#C5A059]/20 font-mono">JOB MIN: $150</span>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                        <button 
-                          onClick={() => setPackageChoice('single_driveway')}
-                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${packageChoice === 'single_driveway' ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
+                      {serviceGuardMessage && (
+                        <div className="mb-3 text-xs text-red-200 font-semibold">
+                          {serviceGuardMessage}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+                        <button
+                          onClick={() => toggleService('siding')}
+                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${selectedServices.siding ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
                         >
-                          <span className="block font-medium">Flatwork Restoration</span>
-                          <span className="block text-xl font-bold mt-1.5 font-mono text-white">${clientProposalCalculations.drivewayWash.toLocaleString()}</span>
+                          <span className="block font-medium">Exterior Soft Wash</span>
+                          <span className="block text-xl font-bold mt-1.5 font-mono text-white">${clientProposalCalculations.sidingWash.toLocaleString()}</span>
                         </button>
 
-                        <button 
-                          onClick={() => setPackageChoice('single_windows')}
-                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${packageChoice === 'single_windows' ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
+                        <button
+                          onClick={() => toggleService('windows')}
+                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${selectedServices.windows ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
                         >
-                          <span className="block font-medium">Exterior Window Detail</span>
+                          <span className="block font-medium">Window Detail</span>
                           <span className="block text-xl font-bold mt-1.5 font-mono text-white">${clientProposalCalculations.windowDetail.toLocaleString()}</span>
                         </button>
 
                         <button 
-                          onClick={() => setPackageChoice('single_siding')}
-                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${packageChoice === 'single_siding' ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
+                          onClick={() => toggleService('driveway')}
+                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${selectedServices.driveway ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
                         >
-                          <span className="block font-medium">House Siding Wash</span>
-                          <span className="block text-xl font-bold mt-1.5 font-mono text-white">${clientProposalCalculations.sidingWash.toLocaleString()}</span>
+                          <span className="block font-medium">Driveway Restoration</span>
+                          <span className="block text-xl font-bold mt-1.5 font-mono text-white">
+                            {drivewayPolygonComplete ? `$${clientProposalCalculations.drivewayWash.toLocaleString()}` : <span className="text-[#C5A059]">Measure above</span>}
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => toggleService('frontPatio')}
+                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${selectedServices.frontPatio ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
+                        >
+                          <span className="block font-medium">Front Patio Restoration</span>
+                          <span className="block text-xl font-bold mt-1.5 font-mono text-white">
+                            {frontPatioPolygonComplete ? `$${pricePatioSurface(adjFrontPatio).toLocaleString()}` : <span className="text-[#C5A059]">Measure above</span>}
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => toggleService('backPatio')}
+                          className={`p-4 rounded-none border text-left cursor-pointer transition-all ${selectedServices.backPatio ? 'bg-[#1a1e22] text-[#C5A059] border-[#C5A059] shadow-sm' : 'bg-[#0F1113] text-white/70 border-white/10 hover:border-white/20'}`}
+                        >
+                          <span className="block font-medium">Back Patio Restoration</span>
+                          <span className="block text-xl font-bold mt-1.5 font-mono text-white">
+                            {backPatioPolygonComplete ? `$${pricePatioSurface(adjBackPatio).toLocaleString()}` : <span className="text-[#C5A059]">Measure above</span>}
+                          </span>
                         </button>
                       </div>
                     </div>
 
                     {/* THE ACTION-ORIENTED TRANSITION ACTION: Book vs Walkthrough */}
+                    {itemizedBill.items.length > 0 && (
+                      <div className="bg-[#131619] p-6 rounded-none border border-white/10 text-[13px]">
+                        <h4 className="font-serif text-white mb-3">Review Breakdown</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-white/70">
+                          <div>
+                            <div className="flex justify-between"><span>Roof sqft</span><span className="text-[#C5A059]">{adjRoofFootprint.toLocaleString()}</span></div>
+                            <div className="flex justify-between"><span>Living sqft</span><span className="text-[#C5A059]">{adjHomeSize.toLocaleString()}</span></div>
+                            <div className="flex justify-between"><span>Stories</span><span className="text-[#C5A059]">{adjStories}</span></div>
+                            <div className="flex justify-between"><span>Driveway sqft</span><span className="text-[#C5A059]">{adjDriveway.toLocaleString()}</span></div>
+                            <div className="flex justify-between"><span>Front patio sqft</span><span className="text-[#C5A059]">{adjFrontPatio.toLocaleString()}</span></div>
+                            <div className="flex justify-between"><span>Back patio sqft</span><span className="text-[#C5A059]">{adjBackPatio.toLocaleString()}</span></div>
+                          </div>
+                          <div>
+                            <div className="flex justify-between"><span>Window component</span><span className="text-[#C5A059]">{adjRoofFootprint.toLocaleString()} roof sqft</span></div>
+                            <div className="flex justify-between"><span>Window rate</span><span className="text-[#C5A059]">{adjStories >= 2 ? '$0.16/roof sqft' : '$0.10/roof sqft'}</span></div>
+                            <div className="flex justify-between"><span>Window price</span><span className="text-[#C5A059]">${clientProposalCalculations.windowDetail.toLocaleString()}</span></div>
+
+                            <div className="mt-3 border-t border-white/5 pt-3">
+                              <div className="flex justify-between"><span>Soft wash (roof sqft)</span><span className="text-[#C5A059]">{adjRoofFootprint.toLocaleString()} sqft</span></div>
+                              <div className="flex justify-between"><span>Soft wash rate</span><span className="text-[#C5A059]">$0.30/roof sqft</span></div>
+                              <div className="flex justify-between"><span>Story upcharge</span><span className="text-[#C5A059]">{adjStories === 2 ? '$150' : adjStories >= 3 ? '$300' : '$0'}</span></div>
+                              <div className="flex justify-between"><span>Soft wash price</span><span className="text-[#C5A059]">${clientProposalCalculations.sidingWash.toLocaleString()}</span></div>
+                            </div>
+
+                            <div className="mt-3 border-t border-white/5 pt-3">
+                              <div className="flex justify-between"><span>Driveway component</span><span className="text-[#C5A059]">{adjDriveway.toLocaleString()} sqft</span></div>
+                              <div className="flex justify-between"><span>Driveway rate</span><span className="text-[#C5A059]">$0.25/sqft</span></div>
+                              <div className="flex justify-between"><span>Driveway price</span><span className="text-[#C5A059]">${clientProposalCalculations.drivewayWash.toLocaleString()}</span></div>
+                            </div>
+
+                            <p className="mt-3 border-t border-white/5 pt-3 text-[10px] text-white/45 leading-relaxed">
+                              * Gutter faces are washed as part of the house. Clearing debris inside gutters is separate and not included. Roof cleaning is walkthrough-only. Book an onsite walkthrough if you want the roof reviewed.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="bg-[#131619] p-6 rounded-none border border-white/10">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+                        <div>
+                          <h4 className="text-sm font-serif text-white">Itemized Estimate</h4>
+                          <p className="text-[10px] text-white/40 mt-1">
+                            Final selected price used for booking confirmation.
+                          </p>
+                          <p className="text-[11px] text-white/50 mt-2">{finalEstimate.note}</p>
+                        </div>
+                        <span className="text-[#C5A059] font-bold text-2xl">
+                          {finalEstimate.priceAvailable
+                            ? `$${finalEstimate.total.toLocaleString()}`
+                            : finalEstimate.note}
+                        </span>
+                      </div>
+
+                      {finalEstimate.items.length === 0 ? (
+                        <div className="rounded-none border border-white/10 p-4 text-sm text-white/60">
+                          {finalEstimate.priceAvailable
+                            ? 'Select a package or at least one service to generate the final price.'
+                            : finalEstimate.note}
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {finalEstimate.items.map((item) => (
+                            <div key={`${item.label}-${item.rate}`} className="rounded-none border border-white/10 p-4 bg-[#0F1113]">
+                              <div className="flex items-center justify-between gap-4">
+                                <div>
+                                  <h5 className="text-sm font-semibold text-white">{item.label}</h5>
+                                  <p className="text-[11px] text-white/50 mt-1">{item.measurement} - {item.rate}</p>
+                                </div>
+                                <span className="text-[#C5A059] font-semibold">${item.price.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
                     <div className="pt-6 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-4">
                       
+                      <div className="text-xs text-white/60 mb-2">
+                        {polygonRequirementError ? (
+                          <span className="text-red-200">{polygonRequirementError}</span>
+                        ) : (
+                          'Instant quote. Your date confirmed within 48 hours.'
+                        )}
+                      </div>
                       <div className="flex bg-white/[0.03] p-1 border border-white/10 rounded-none w-full md:w-auto">
                         <button
                           onClick={() => setBookingType('walkthrough')}
@@ -1276,7 +1920,7 @@ export default function App() {
                           <div>
                             <label className="block text-[10px] font-bold text-white/50 uppercase font-mono tracking-wider mb-1.5">Direct Voice Phone</label>
                             <input 
-                              type="tel" required placeholder="e.g. (415) 555-0143"
+                              type="tel" required placeholder="979.985.2750"
                               value={phone} onChange={(e) => setPhone(e.target.value)}
                               className="w-full px-4 py-2.5 rounded-none border border-white/20 focus:outline-none focus:border-[#C5A059] bg-[#0F1113] text-white font-sans placeholder:text-white/30"
                             />
@@ -1310,7 +1954,45 @@ export default function App() {
                         </div>
                         <div className="flex justify-between items-center text-white font-bold border-t border-white/5 pt-2 mt-2">
                           <span className="font-mono text-[10px] text-[#C5A059] uppercase tracking-wider">SOP Rate Quote Locked:</span>
-                          <span className="font-serif text-[#C5A059] text-base">${getSelectedPackagePrice().toLocaleString()}</span>
+                          <span className="font-serif text-[#C5A059] text-base">
+                            {getSelectedPackageDisplay()}
+                          </span>
+                        </div>
+                        <div className="border-t border-white/5 pt-3 mt-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-mono text-[10px] text-white/50 uppercase tracking-wider">Itemized bill:</span>
+                            <span className="text-[11px] text-white/45">{finalEstimate.note}</span>
+                          </div>
+
+                          {selectedPackageInclusions.length > 0 && (
+                            <div className="mt-3 bg-[#131619] border border-white/10 p-3">
+                              <span className="block text-[10px] font-mono uppercase tracking-wider text-[#C5A059] mb-2">
+                                Package includes
+                              </span>
+                              <ul className="space-y-1.5 text-white/70">
+                                {selectedPackageInclusions.map((inclusion) => (
+                                  <li key={inclusion} className="flex gap-2">
+                                    <span className="text-[#C5A059]">&#8226;</span>
+                                    <span>{inclusion}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          <div className="mt-3 space-y-2">
+                            {finalEstimate.items.map((item) => (
+                              <div key={`${item.label}-${item.rate}`} className="flex items-start justify-between gap-3 border border-white/10 bg-[#131619] p-3">
+                                <div>
+                                  <span className="block text-white font-semibold">{item.label}</span>
+                                  <span className="block text-[10px] text-white/45 mt-0.5">{item.measurement} - {item.rate}</span>
+                                </div>
+                                <span className="text-[#C5A059] font-semibold whitespace-nowrap">
+                                  ${item.price.toLocaleString()}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
 
@@ -1378,7 +2060,7 @@ export default function App() {
 
                       <span className="text-white font-bold border-t border-white/10 pt-2.5 mt-1.5 font-sans">Guaranteed Price:</span>
                       <span className="text-right text-xl font-bold text-[#C5A059] font-serif border-t border-white/10 pt-2.5 mt-1.5">
-                        ${getSelectedPackagePrice().toLocaleString()}
+                        {getSelectedPackageDisplay()}
                       </span>
                     </div>
 
@@ -1676,7 +2358,7 @@ export default function App() {
                           </div>
 
                           <div className="p-2.5 bg-[#0F1113] border border-white/10 rounded-none">
-                            <span className="text-white/40 font-mono block text-[9px]">Driveway / Flatwork</span>
+                            <span className="text-white/40 font-mono block text-[9px]">Driveway Restoration</span>
                             <div className="flex items-baseline gap-1 mt-1 font-semibold text-white">
                               <input 
                                 type="number" 
@@ -1749,16 +2431,12 @@ export default function App() {
                             <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).sidingWash}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Double Driveway Wash ({admDrivewaySqft} sqft):</span>
+                            <span>Driveway Restoration ({admDrivewaySqft} sqft):</span>
                             <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).drivewayWash}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Window detailing ({admWindows} sections):</span>
+                            <span>Window Detail ({admRoofFootprint.toLocaleString()} roof sqft):</span>
                             <span className="text-[#C5A059]">${calculateClientSideRates(admHomeSize, admStories, admRoofFootprint, admDrivewaySqft, 0, admWindows, admMaterial).windowDetail}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Gutter Restorations (Wash & Brighten):</span>
-                            <span className="text-[#C5A059]">$300</span>
                           </div>
                           <div className="flex justify-between font-serif font-bold text-[#E0D8D0] border-t border-white/10 pt-1.5 mt-1.5 text-sm">
                             <span>Calculated Signature Proposal:</span>
@@ -1804,13 +2482,19 @@ export default function App() {
       </main>
 
       {/* FOOTER */}
-      <footer className="mt-12 bg-[#0F1113] border-t border-white/10 py-6 text-center text-[10px] text-white/35 font-mono">
-        <div className="max-w-7xl mx-auto px-4">
-          <p>© 2026 Stonevale Exterior Co. All proposal estimates are subject to on-site steward walkthrough verification.</p>
-          <div className="mt-2.5 flex justify-center gap-3 text-[9px] text-[#C5A059]/50">
-            <span>Server PERSISTENT Database: JSON Data Backup</span>
-            <span>&#8226;</span>
-            <span>Google Solar API & Gemini Flash Enabled</span>
+      <footer className="mt-12 sv-bg-dark border-t border-white/10 py-6 text-center text-[10px] text-white/35 font-mono">
+        <div className="max-w-6xl mx-auto px-6">
+          <p className="text-white/60">© 2026 Stonevale Exterior Co. All proposal estimates are subject to on-site steward walkthrough verification.</p>
+          <div className="mt-2.5 flex flex-col md:flex-row justify-center gap-3 text-[12px] text-[#c4a265] font-mono items-center">
+            <span>979.985.2750</span>
+            <span>&#183;</span>
+            <a href="https://stonevaleexterior.com" className="text-white/80">stonevaleexterior.com</a>
+            <span>&#183;</span>
+            <span className="text-white/60">Licensed and insured. Owner-operated.</span>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="text-sm font-mono text-[#C5A059]">979.985.2750</div>
           </div>
         </div>
       </footer>

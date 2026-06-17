@@ -10,6 +10,7 @@ export interface CalculatedRates {
   
   exteriorRefresh: number;
   fullHomeDetail: number;
+  pricingReviewRequired?: boolean;
   estateCarePlans: {
     essential: number;
     premium: number;
